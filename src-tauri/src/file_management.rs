@@ -133,6 +133,112 @@ pub async fn get_folder_tree(path: String) -> Result<FolderNode, String> {
     }
 }
 
+
+fn file_scan_dir_recursive(path: &Path) -> Result<Vec<FolderNode>, std::io::Error> {
+    let mut children = Vec::new();
+
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!("Could not scan directory '{}': {}", path.display(), e);
+            return Ok(Vec::new());
+        }
+    };
+
+    for entry in entries.filter_map(std::result::Result::ok) {
+        let current_path = entry.path();
+        let metadata = match fs::metadata(&current_path) {
+            Ok(m) => m,
+            Err(_) => continue, // Skip broken links, etc.
+        };
+
+        let is_hidden = current_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map_or(false, |s| s.starts_with('.'));
+
+        if is_hidden {
+            continue;
+        }
+
+        if metadata.is_dir() {
+            let sub_children = file_scan_dir_recursive(&current_path)?;
+            children.push(FolderNode {
+                name: current_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                path: current_path.to_string_lossy().into_owned(),
+                children: sub_children,
+                is_dir: true,
+            });
+        } else if metadata.is_file() {
+            let is_lut_file = current_path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| {
+                    matches!(
+                        ext.to_lowercase().as_str(),
+                        "cube" | "3dl" | "png" | "tif" | "tiff"
+                    )
+                })
+                .unwrap_or(false);
+
+            if is_lut_file {
+                children.push(FolderNode {
+                    name: current_path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                    path: current_path.to_string_lossy().into_owned(),
+                    children: vec![],
+                    is_dir: false,
+                });
+            }
+        }
+    }
+
+    // Optional: sort directories before files, alphabetically
+    children.sort_by(|a, b| {
+        if a.is_dir == b.is_dir {
+            a.name.to_lowercase().cmp(&b.name.to_lowercase())
+        } else if a.is_dir {
+            std::cmp::Ordering::Less
+        } else {
+            std::cmp::Ordering::Greater
+        }
+    });
+
+    Ok(children)
+}
+
+fn get_file_tree_sync(path: String) -> Result<FolderNode, String> {
+    let root_path = Path::new(&path);
+    let name = root_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let children = file_scan_dir_recursive(root_path).map_err(|e| e.to_string())?;
+    Ok(FolderNode {
+        name,
+        path: path.clone(),
+        children,
+        is_dir: root_path.is_dir()
+    })
+}
+
+#[tauri::command]
+pub async fn get_file_tree(path: String) -> Result<FolderNode, String> {
+    match tauri::async_runtime::spawn_blocking(move || get_file_tree_sync(path)).await {
+        Ok(Ok(folder_node)) => Ok(folder_node),
+        Ok(Err(e)) => Err(e),
+        Err(e) => Err(format!("Failed to execute folder tree task: {}", e)),
+    }
+}
+
 pub fn get_sidecar_path(image_path: &str) -> PathBuf {
     let path = PathBuf::from(image_path);
     let original_filename = path.file_name().unwrap_or_default().to_string_lossy();

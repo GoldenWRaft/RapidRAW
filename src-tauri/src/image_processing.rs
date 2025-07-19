@@ -1,6 +1,7 @@
-use std::sync::Arc;
+use std::{io::Read, sync::Arc};
+use base64::{engine::general_purpose, Engine};
 use bytemuck::{Pod, Zeroable};
-use image::{DynamicImage, GenericImageView, Rgba};
+use image::{buffer, DynamicImage, GenericImageView, Rgba};
 use imageproc::geometric_transformations::{rotate_about_center, Interpolation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -462,6 +463,32 @@ pub struct GpuContext {
     pub limits: wgpu::Limits,
 }
 
+impl GpuContext {
+    pub async fn new() -> Result<Self, String> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
+        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }).await.ok_or("Failed to find a suitable GPU adapter")?;
+
+        let (device, queue) = adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("RapidRAW Device"),
+                required_features: wgpu::Features::FLOAT32_FILTERABLE,
+                required_limits: wgpu::Limits::default(),
+            },
+            None,
+        ).await.map_err(|e| format!("Failed to create device: {}", e))?;
+
+        Ok(GpuContext {
+            device: Arc::new(device),
+            queue: Arc::new(queue),
+            limits: adapter.limits(),
+        })
+    }
+}
+
 #[derive(Serialize, Clone)]
 pub struct HistogramData {
     red: Vec<f32>,
@@ -659,4 +686,25 @@ pub fn calculate_waveform_from_image(image: &DynamicImage) -> Result<WaveformDat
         width: WAVEFORM_WIDTH,
         height: WAVEFORM_HEIGHT,
     })
+}
+
+#[tauri::command]
+pub fn load_file_data(path: &str) -> String {
+    let file = std::fs::File::open(path).map_err(|e| format!("Failed to open file: {}", e));
+
+    let buffer = std::io::BufReader::new(file.unwrap());
+
+    let base64 = general_purpose::STANDARD.encode(buffer.get_ref().bytes()
+        .map(|b| b.unwrap_or(0))
+        .collect::<Vec<u8>>());
+    base64
+}
+
+// read file data as string
+#[tauri::command]
+pub fn read_file_data(path: &str) -> Result<String, String> {
+    let mut file = std::fs::File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).map_err(|e| format!("Failed to read file: {}", e))?;
+    Ok(contents)
 }

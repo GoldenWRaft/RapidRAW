@@ -1,8 +1,9 @@
-import { SlidersHorizontal, Info, Scaling, BrainCircuit, Bookmark, Save, Layers } from 'lucide-react';
+import { SlidersHorizontal, Info, Scaling, BrainCircuit, Bookmark, Save, Layers, Wand2 } from 'lucide-react';
 
 const panelOptions = [
   { id: 'metadata', icon: Info, title: 'Metadata' },
   { id: 'adjustments', icon: SlidersHorizontal, title: 'Adjustments' },
+  { id: 'lut', icon: Wand2, title: 'LUTs'},
   { id: 'crop', icon: Scaling, title: 'Crop' },
   { id: 'masks', icon: Layers, title: 'Masks' },
   { id: 'presets', icon: Bookmark, title: 'Presets' },

@@ -1,8 +1,9 @@
-import { Folder, FolderOpen, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
+import { Folder, FolderOpen, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, File } from 'lucide-react';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 
-function TreeNode({ node, onFolderSelect, selectedPath, isExpanded, onToggle, onContextMenu, expandedFolders }) {
+function TreeNode({ node, onFolderSelect, selectedPath, isExpanded, onToggle, onContextMenu, expandedFolders, fileTree }) {
+  const isFolder = node.is_dir;
   const hasChildren = node.children && node.children.length > 0;
   const childFolders = node.children && node.children.map(item => item.is_dir).length > 0;
   const isSelected = node.path === selectedPath;
@@ -52,48 +53,52 @@ function TreeNode({ node, onFolderSelect, selectedPath, isExpanded, onToggle, on
         })}
         onClick={handleNameClick}
       >
-        <div
+          <div
           onClick={handleFolderIconClick}
           className={clsx('cursor-pointer p-0.5 rounded hover:bg-surface', {
             'cursor-default': !hasChildren,
           })}
-        >
-          {hasChildren ? (
-            isExpanded ? (
-              <FolderOpen size={16} className="text-hover-color flex-shrink-0" />
+          >
+            {hasChildren ? (
+              isExpanded ? (
+                <FolderOpen size={16} className="text-hover-color flex-shrink-0" />
+              ) : (
+                <Folder size={16} className="text-text-secondary flex-shrink-0" />
+              )
             ) : (
-              <Folder size={16} className="text-text-secondary flex-shrink-0" />
-            )
-          ) : (
-            <Folder size={16} className="text-text-secondary flex-shrink-0" />
-          )}
-        </div>
+              isFolder ? (
+                <Folder size={16} className="text-text-secondary flex-shrink-0"/>
+              ) : (
+                <File size={16} className="text-text-secondary flex-shrink-0" />
+              )
+            )}
+          </div>
+          
         <span 
           onDoubleClick={handleNameDoubleClick}
           className="truncate select-none cursor-pointer flex-1"
+          title={node.name}
         >
           {node.name}
         </span>
         <div
           onClick={handleFolderIconClick}
         >
-        <div
-          onClick={handleFolderIconClick}
-          className={clsx('p-0.5 rounded hover:bg-surface', {
-            'cursor-pointer': childFolders,
-            'cursor-default': !childFolders,
-          })}
-        >
-          {childFolders ? (
-            isExpanded ? (
-              <ChevronUp size={16} className="text-text-secondary flex-shrink-0" />
+           {isFolder && (
+          <div
+            onClick={handleFolderIconClick}
+            className={clsx('p-0.5 rounded hover:bg-surface', {
+              'cursor-pointer': hasChildren && childFolders,
+              'cursor-default': !hasChildren && !childFolders,
+            })}
+          >
+            {childFolders && hasChildren ? (
+              isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />
             ) : (
-              <ChevronDown size={16} className="text-text-secondary flex-shrink-0" />
-            )
-          ) : (
-            <span className="w-4 h-4 inline-block" />
-          )}
-        </div>
+              <span className="w-4 h-4 inline-block" />
+            )}
+          </div>
+        )}
         </div>
       </div>
 
@@ -139,7 +144,7 @@ function TreeNode({ node, onFolderSelect, selectedPath, isExpanded, onToggle, on
   );
 }
 
-export default function FolderTree({ tree, onFolderSelect, selectedPath, isLoading, isVisible, setIsVisible, style, isResizing, onContextMenu, expandedFolders, onToggleFolder }) {
+export default function FolderTree({ tree, onFolderSelect, selectedPath, isLoading, isVisible, setIsVisible, style, isResizing, onContextMenu, expandedFolders, onToggleFolder, fileTree = false }) {
   const handleEmptyAreaContextMenu = (e) => {
     if (e.target === e.currentTarget) {
       onContextMenu(e, null);
@@ -154,13 +159,15 @@ export default function FolderTree({ tree, onFolderSelect, selectedPath, isLoadi
       )}
       style={style}
     >
-      <button
-        onClick={() => setIsVisible(!isVisible)}
-        className="absolute top-1/2 -translate-y-1/2 right-1 w-6 h-10 hover:bg-card-active rounded-md flex items-center justify-center z-10"
-        title={isVisible ? "Collapse Panel" : "Expand Panel"}
-      >
-        {isVisible ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-      </button>
+      { !fileTree && (
+        <button
+          onClick={() => setIsVisible(!isVisible)}
+          className="absolute top-1/2 -translate-y-1/2 right-1 w-6 h-10 hover:bg-card-active rounded-md flex items-center justify-center z-10"
+          title={isVisible ? "Collapse Panel" : "Expand Panel"}
+        >
+          {isVisible ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+        </button>
+      )}
 
       {isVisible && (
         <div 
@@ -177,6 +184,7 @@ export default function FolderTree({ tree, onFolderSelect, selectedPath, isLoadi
                 onToggle={onToggleFolder}
                 onContextMenu={onContextMenu}
                 expandedFolders={expandedFolders}
+                fileTree={fileTree}
               />
               {tree.children.length === 0 && (
                 <div className="text-xs text-text-secondary mt-2 px-2">

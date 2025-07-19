@@ -103,7 +103,7 @@ pub fn run_gpu_processing(
 
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Image Processing Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shader.wgsl").into()),
     });
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

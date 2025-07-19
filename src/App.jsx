@@ -28,6 +28,7 @@ import RenameFolderModal from './components/modals/RenameFolderModal';
 import ConfirmModal from './components/modals/ConfirmModal';
 import { THEMES, DEFAULT_THEME_ID } from './themes';
 import { v4 as uuidv4 } from 'uuid';
+import LutPanel from './components/panel/right/LutPanel';
 
 const DEBUG = false;
 
@@ -930,6 +931,7 @@ function App() {
         if (key === 'i' && !isCtrl) { event.preventDefault(); handleRightPanelSelect('metadata'); }
         if (key === 'e' && !isCtrl) { event.preventDefault(); handleRightPanelSelect('export'); }
         if (key === 'w' && !isCtrl) { event.preventDefault(); setIsWaveformVisible(prev => !prev); }
+        // if (key === 'l' && !isCtrl) { event.preventDefault(); handleRightPanelSelect('lut'); }
       }
 
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
@@ -1364,6 +1366,13 @@ function App() {
     showContextMenu(event.clientX, event.clientY, options);
   };
 
+  const handleAppliedLutImage = (imageUrl) => {
+    console.log("App jsx: LUT applied to image:", imageUrl);
+    if (!selectedImage) return;
+    setSelectedImage(prev => ({ ...prev, originalUrl: imageUrl }));
+    setFinalPreviewUrl(imageUrl);
+  }
+
   const renderMainView = () => {
     if (selectedImage) {
       return (
@@ -1482,6 +1491,13 @@ function App() {
                   onDeletePatch={handleDeleteAiPatch}
                   onTogglePatchVisibility={handleToggleAiPatchVisibility}
                 />}
+                { renderedRightPanel === 'lut' && <LutPanel
+                    selectedImage={selectedImage}
+                    activePanel={activeRightPanel}
+                    rootPath={rootPath}
+                    setFinalPreviewUrl={handleAppliedLutImage}
+                  />
+                }
               </div>
             </div>
             <div className={clsx('h-full border-l transition-colors', activeRightPanel ? 'border-surface' : 'border-transparent')}>

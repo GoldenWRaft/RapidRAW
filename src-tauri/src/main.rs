@@ -9,6 +9,7 @@ mod mask_generation;
 mod ai_processing;
 mod formats;
 mod image_loader;
+mod lut_processes;
 
 use std::io::{Cursor, BufWriter};
 use std::sync::{Arc, Mutex};
@@ -44,6 +45,8 @@ use crate::ai_processing::{
 use crate::formats::is_raw_file;
 use crate::image_loader::{load_base_image_from_bytes, composite_patches_on_image, load_and_composite};
 
+use crate::lut_processes::*;
+
 #[derive(Clone)]
 pub struct LoadedImage {
     image: DynamicImage,
@@ -62,7 +65,7 @@ pub struct CachedPreview {
 pub struct AppState {
     original_image: Mutex<Option<LoadedImage>>,
     cached_preview: Mutex<Option<CachedPreview>>,
-    gpu_context: Mutex<Option<GpuContext>>,
+    pub gpu_context: Mutex<Option<GpuContext>>,
     ai_state: Mutex<Option<AiState>>,
     export_task_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -1338,6 +1341,33 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            
+            let gpu_context_result = pollster::block_on(GpuContext::new());
+
+            match gpu_context_result {
+                Ok(gpu_context) => {
+                    // On success, create and manage your AppState
+                    app.manage(AppState {
+                        original_image: Mutex::new(None),
+                        cached_preview: Mutex::new(None),
+                        gpu_context: Mutex::new(Some(gpu_context)),
+                        ai_state: Mutex::new(None),
+                        export_task_handle: Mutex::new(None),
+                    });
+                },
+                Err(e) => {
+                    // On failure, show a friendly error dialog and exit
+                    use tauri_plugin_dialog::DialogExt;
+                    let handle = app.handle().clone();
+                    handle.dialog().message(format!("Fatal Graphics Error\n\n{}\n\nThe application will now close.", e))
+                        .title("Error")
+                        .kind(tauri_plugin_dialog::MessageDialogKind::Error)
+                        .blocking_show();
+                    
+                    std::process::exit(1);
+                }
+            }
+
             let app_handle = app.handle().clone();
 
             let resource_path = app_handle.path()
@@ -1396,13 +1426,6 @@ fn main() {
 
             Ok(())
         })
-        .manage(AppState {
-            original_image: Mutex::new(None),
-            cached_preview: Mutex::new(None),
-            gpu_context: Mutex::new(None),
-            ai_state: Mutex::new(None),
-            export_task_handle: Mutex::new(None),
-        })
         .invoke_handler(tauri::generate_handler![
             show_in_finder,
             delete_files_from_disk,
@@ -1417,8 +1440,12 @@ fn main() {
             load_metadata,
             image_processing::generate_histogram,
             image_processing::generate_waveform,
+            image_processing::load_file_data,
+            image_processing::read_file_data,
+            lut_cube::apply_lut_type_gpu,
             file_management::list_images_in_dir,
             file_management::get_folder_tree,
+            file_management::get_file_tree,
             file_management::generate_thumbnails,
             file_management::generate_thumbnails_progressive,
             file_management::create_folder,
