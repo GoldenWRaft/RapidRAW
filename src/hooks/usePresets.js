@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import debounce from 'lodash.debounce';
-import { COPYABLE_ADJUSTMENT_KEYS } from '../App';
+import { COPYABLE_ADJUSTMENT_KEYS } from '../utils/adjustments';
 
 export function usePresets(currentAdjustments) {
   const [presets, setPresets] = useState([]);

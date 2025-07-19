@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, forwardRef } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
+import { invoke } from '@tauri-apps/api/core';
 import {
   Folder,
   Image as ImageIcon,
@@ -15,7 +16,7 @@ import { FixedSizeGrid as Grid } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import Button from '../ui/Button';
 import SettingsPanel from './SettingsPanel';
-import { THEMES, DEFAULT_THEME_ID } from '../../themes';
+import { THEMES, DEFAULT_THEME_ID } from '../../utils/themes';
 
 const sortOptions = [
   { key: 'name', order: 'asc', label: 'File Name (A-Z)' },
@@ -33,6 +34,12 @@ const ratingFilterOptions = [
   { value: 3, label: '3 & up' },
   { value: 4, label: '4 & up' },
   { value: 5, label: '5 only' },
+];
+
+const rawStatusOptions = [
+  { key: 'all', label: 'All Types' },
+  { key: 'rawOnly', label: 'RAW Only' },
+  { key: 'nonRawOnly', label: 'Non-RAW Only' },
 ];
 
 const thumbnailSizeOptions = [
@@ -118,27 +125,55 @@ function ThumbnailSizeOptions({ selectedSize, onSelectSize }) {
 }
 
 function FilterOptions({ filterCriteria, setFilterCriteria }) {
+  const handleRatingFilterChange = (rating) => {
+    setFilterCriteria(prev => ({ ...prev, rating }));
+  };
+
+  const handleRawStatusChange = (rawStatus) => {
+    setFilterCriteria(prev => ({ ...prev, rawStatus }));
+  };
+
   return (
-    <>
-      <div className="px-3 py-2 text-xs font-semibold text-text-secondary uppercase">Filter by Rating</div>
-      {ratingFilterOptions.map((option) => {
-        const isSelected = filterCriteria.rating === option.value;
-        return (
-          <button
-            key={option.value}
-            onClick={() => setFilterCriteria({ rating: option.value })}
-            className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'}`}
-            role="menuitem"
-          >
-            <span className="flex items-center gap-2">
-              {option.value > 0 && <StarIcon size={16} className="text-accent fill-accent" />}
+    <div className="space-y-4">
+      <div>
+        <div className="px-3 py-2 text-xs font-semibold text-text-secondary uppercase">Filter by Rating</div>
+        {ratingFilterOptions.map((option) => {
+          const isSelected = filterCriteria.rating === option.value;
+          return (
+            <button
+              key={option.value}
+              onClick={() => handleRatingFilterChange(option.value)}
+              className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'}`}
+              role="menuitem"
+            >
+              <span className="flex items-center gap-2">
+                {option.value > 0 && <StarIcon size={16} className="text-accent fill-accent" />}
+                <span>{option.label}</span>
+              </span>
+              {isSelected && <Check size={16} />}
+            </button>
+          );
+        })}
+      </div>
+
+      <div>
+        <div className="px-3 py-2 text-xs font-semibold text-text-secondary uppercase">Filter by File Type</div>
+        {rawStatusOptions.map((option) => {
+          const isSelected = (filterCriteria.rawStatus || 'all') === option.key;
+          return (
+            <button
+              key={option.key}
+              onClick={() => handleRawStatusChange(option.key)}
+              className={`w-full text-left px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors duration-150 ${isSelected ? 'bg-card-active text-text-primary font-semibold' : 'text-text-primary hover:bg-bg-primary'}`}
+              role="menuitem"
+            >
               <span>{option.label}</span>
-            </span>
-            {isSelected && <Check size={16} />}
-          </button>
-        );
-      })}
-    </>
+              {isSelected && <Check size={16} />}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -172,7 +207,8 @@ function ViewOptionsDropdown({
   sortCriteria,
   setSortCriteria,
 }) {
-  const isFilterActive = filterCriteria.rating > 0;
+  const isFilterActive = filterCriteria.rating > 0 || 
+                        (filterCriteria.rawStatus && filterCriteria.rawStatus !== 'all')
 
   return (
     <DropdownMenu
@@ -183,16 +219,16 @@ function ViewOptionsDropdown({
         </>
       }
       buttonTitle="View Options"
-      contentClassName="w-[580px]"
+      contentClassName="w-[720px]"
     >
       <div className="flex">
-        <div className="flex-1 p-2">
+        <div className="w-1/4 p-2 border-r border-border-color">
           <ThumbnailSizeOptions selectedSize={thumbnailSize} onSelectSize={onSelectSize} />
         </div>
-        <div className="flex-1 p-2 border-l border-r border-border-color">
+        <div className="w-2/4 p-2 border-r border-border-color">
           <FilterOptions filterCriteria={filterCriteria} setFilterCriteria={setFilterCriteria} />
         </div>
-        <div className="flex-1 p-2">
+        <div className="w-1/4 p-2">
           <SortOptions sortCriteria={sortCriteria} setSortCriteria={setSortCriteria} />
         </div>
       </div>
@@ -274,8 +310,15 @@ export default function MainLibrary({
   const [showSettings, setShowSettings] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [thumbnailSize, setThumbnailSize] = useState('medium');
+  const [supportedTypes, setSupportedTypes] = useState(null);
 
   useEffect(() => { getVersion().then(setAppVersion); }, []);
+
+  useEffect(() => {
+    invoke('get_supported_file_types')
+      .then(types => setSupportedTypes(types))
+      .catch(err => console.error('Failed to load supported file types:', err));
+  }, []);
 
   if (!rootPath) {
     if (!appSettings) {
@@ -361,7 +404,7 @@ export default function MainLibrary({
 
               return (
                 <Grid
-                  key={`${sortCriteria.key}-${sortCriteria.order}-${filterCriteria.rating}`}
+                  key={`${sortCriteria.key}-${sortCriteria.order}-${filterCriteria.rating}-${filterCriteria.rawStatus || 'all'}`}
                   outerElementType={customOuterElement}
                   height={height}
                   width={width}

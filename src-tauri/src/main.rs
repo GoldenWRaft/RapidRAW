@@ -11,13 +11,11 @@ mod formats;
 mod image_loader;
 mod lut_processes;
 
-use std::io::{Cursor, BufWriter};
+use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::fs;
 use std::collections::{HashMap, hash_map::DefaultHasher};
-use std::path::Path;
-use std::process::Command;
 use std::hash::{Hash, Hasher};
 
 use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Rgba, RgbaImage, ImageFormat, GrayImage};
@@ -26,23 +24,25 @@ use tauri::{Manager, Emitter};
 use base64::{Engine as _, engine::general_purpose};
 use serde_json::Value;
 use tokio::task::JoinHandle;
-use walkdir::WalkDir;
 use window_vibrancy::{apply_acrylic, apply_vibrancy, NSVisualEffectMaterial};
 use serde::{Serialize, Deserialize};
-use uuid::Uuid;
-use rayon::prelude::*;
+use chrono::Local;
+use little_exif::metadata::Metadata;
+use little_exif::exif_tag::ExifTag;
+use little_exif::filetype::FileExtension;
+use little_exif::rational::uR64;
 
 use crate::image_processing::{
     get_all_adjustments_from_json, get_or_init_gpu_context, GpuContext,
     ImageMetadata, process_and_get_dynamic_image, Crop, apply_crop, apply_rotation, apply_flip,
 };
-use crate::file_management::get_sidecar_path;
+use crate::file_management::{get_sidecar_path, load_settings, AppSettings};
 use crate::mask_generation::{MaskDefinition, generate_mask_bitmap};
 use crate::ai_processing::{
     AiState, get_or_init_ai_models, generate_image_embeddings, run_sam_decoder,
     AiSubjectMaskParameters, run_u2netp_model, AiForegroundMaskParameters
 };
-use crate::formats::is_raw_file;
+use crate::formats::{is_raw_file};
 use crate::image_loader::{load_base_image_from_bytes, composite_patches_on_image, load_and_composite};
 
 use crate::lut_processes::*;
@@ -68,44 +68,6 @@ pub struct AppState {
     pub gpu_context: Mutex<Option<GpuContext>>,
     ai_state: Mutex<Option<AiState>>,
     export_task_handle: Mutex<Option<JoinHandle<()>>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct Preset {
-    id: String,
-    name: String,
-    adjustments: Value,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct PresetFile {
-    presets: Vec<Preset>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-struct SortCriteria {
-    key: String,
-    order: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-struct LastFolderState {
-    current_folder_path: String,
-    expanded_folders: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-struct AppSettings {
-    last_root_path: Option<String>,
-    editor_preview_resolution: Option<u32>,
-    sort_criteria: Option<SortCriteria>,
-    theme: Option<String>,
-    transparent: Option<bool>,
-    comfyui_address: Option<String>,
-    last_folder_state: Option<LastFolderState>,
 }
 
 #[derive(serde::Serialize)]
@@ -139,20 +101,9 @@ struct ResizeOptions {
 struct ExportSettings {
     jpeg_quality: u8,
     resize: Option<ResizeOptions>,
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            last_root_path: None,
-            editor_preview_resolution: Some(1920),
-            sort_criteria: None,
-            theme: Some("dark".to_string()),
-            transparent: Some(true),
-            comfyui_address: None,
-            last_folder_state: None,
-        }
-    }
+    keep_metadata: bool,
+    strip_gps: bool,
+    filename_template: Option<String>,
 }
 
 fn apply_all_transformations(
@@ -489,7 +440,8 @@ fn generate_fullscreen_preview(
 
 #[tauri::command]
 async fn export_image(
-    path: String,
+    original_path: String,
+    output_path: String,
     js_adjustments: Value,
     export_settings: ExportSettings,
     state: tauri::State<'_, AppState>,
@@ -500,12 +452,12 @@ async fn export_image(
     }
 
     let context = get_or_init_gpu_context(&state)?;
-    let original_image = get_full_image_for_processing(&state)?;
+    let original_image_data = get_full_image_for_processing(&state)?;
     let context = Arc::new(context);
 
     let task = tokio::spawn(async move {
         let processing_result: Result<(), String> = (|| {
-            let base_image = composite_patches_on_image(&original_image, &js_adjustments)
+            let base_image = composite_patches_on_image(&original_image_data, &js_adjustments)
                 .map_err(|e| format!("Failed to composite AI patches for export: {}", e))?;
 
             let (transformed_image, unscaled_crop_offset) = 
@@ -549,24 +501,37 @@ async fn export_image(
                 }
             }
 
-            let output_path = std::path::Path::new(&path);
-            let extension = output_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+            let output_path_obj = std::path::Path::new(&output_path);
+            let extension = output_path_obj.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+            
+            let mut image_bytes = Vec::new();
+            let mut cursor = Cursor::new(&mut image_bytes);
 
-            let mut file = BufWriter::new(fs::File::create(&path).map_err(|e| e.to_string())?);
             match extension.as_str() {
                 "jpg" | "jpeg" => {
                     let rgb_image = final_image.to_rgb8();
-                    let encoder = JpegEncoder::new_with_quality(&mut file, export_settings.jpeg_quality);
+                    let encoder = JpegEncoder::new_with_quality(&mut cursor, export_settings.jpeg_quality);
                     rgb_image.write_with_encoder(encoder).map_err(|e| e.to_string())?;
                 }
                 "png" => {
-                    final_image.write_to(&mut file, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+                    final_image.write_to(&mut cursor, image::ImageFormat::Png).map_err(|e| e.to_string())?;
                 }
                 "tiff" => {
-                    final_image.write_to(&mut file, image::ImageFormat::Tiff).map_err(|e| e.to_string())?;
+                    final_image.write_to(&mut cursor, image::ImageFormat::Tiff).map_err(|e| e.to_string())?;
                 }
                 _ => return Err(format!("Unsupported file extension: {}", extension)),
             };
+
+            write_image_with_metadata(
+                &mut image_bytes,
+                &original_path,
+                &extension,
+                export_settings.keep_metadata,
+                export_settings.strip_gps,
+            )?;
+
+            fs::write(&output_path, image_bytes).map_err(|e| e.to_string())?;
+
             Ok(())
         })();
 
@@ -600,7 +565,7 @@ async fn batch_export_images(
     let context = Arc::new(context);
 
     let task = tokio::spawn(async move {
-        let output_folder_path = Path::new(&output_folder);
+        let output_folder_path = std::path::Path::new(&output_folder);
         let total_paths = paths.len();
 
         for (i, image_path_str) in paths.iter().enumerate() {
@@ -666,26 +631,40 @@ async fn batch_export_images(
                     }
                 }
 
-                let original_path = Path::new(image_path_str);
-                let original_stem = original_path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
-                let new_filename = format!("{}_edited.{}", original_stem, output_format);
+                let original_path = std::path::Path::new(image_path_str);
+                let filename_template = export_settings.filename_template.as_deref().unwrap_or("{original_filename}_edited");
+                let new_stem = generate_filename_from_template(filename_template, original_path, i + 1, total_paths);
+                let new_filename = format!("{}.{}", new_stem, output_format);
                 let output_path = output_folder_path.join(new_filename);
 
-                let mut file = BufWriter::new(fs::File::create(&output_path).map_err(|e| e.to_string())?);
+                let mut image_bytes = Vec::new();
+                let mut cursor = Cursor::new(&mut image_bytes);
+
                 match output_format.as_str() {
                     "jpg" | "jpeg" => {
                         let rgb_image = final_image.to_rgb8();
-                        let encoder = JpegEncoder::new_with_quality(&mut file, export_settings.jpeg_quality);
+                        let encoder = JpegEncoder::new_with_quality(&mut cursor, export_settings.jpeg_quality);
                         rgb_image.write_with_encoder(encoder).map_err(|e| e.to_string())?;
                     }
                     "png" => {
-                        final_image.write_to(&mut file, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+                        final_image.write_to(&mut cursor, image::ImageFormat::Png).map_err(|e| e.to_string())?;
                     }
                     "tiff" => {
-                        final_image.write_to(&mut file, image::ImageFormat::Tiff).map_err(|e| e.to_string())?;
+                        final_image.write_to(&mut cursor, image::ImageFormat::Tiff).map_err(|e| e.to_string())?;
                     }
                     _ => return Err(format!("Unsupported file format: {}", output_format)),
                 };
+
+                write_image_with_metadata(
+                    &mut image_bytes,
+                    image_path_str,
+                    &output_format,
+                    export_settings.keep_metadata,
+                    export_settings.strip_gps,
+                )?;
+
+                fs::write(&output_path, image_bytes).map_err(|e| e.to_string())?;
+
                 Ok(())
             })();
 
@@ -714,6 +693,104 @@ fn cancel_export(state: tauri::State<AppState>) -> Result<(), String> {
     } else {
         return Err("No export task is currently running.".to_string());
     }
+    Ok(())
+}
+
+fn generate_filename_from_template(
+    template: &str,
+    original_path: &std::path::Path,
+    sequence: usize,
+    total: usize,
+) -> String {
+    let now = Local::now();
+    let stem = original_path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+    let sequence_str = format!("{:0width$}", sequence, width = total.to_string().len().max(1));
+
+    let mut result = template.to_string();
+    result = result.replace("{original_filename}", stem);
+    result = result.replace("{sequence}", &sequence_str);
+    result = result.replace("{YYYY}", &now.format("%Y").to_string());
+    result = result.replace("{MM}", &now.format("%m").to_string());
+    result = result.replace("{DD}", &now.format("%d").to_string());
+    result = result.replace("{hh}", &now.format("%H").to_string());
+    result = result.replace("{mm}", &now.format("%M").to_string());
+
+    result
+}
+
+fn write_image_with_metadata(
+    image_bytes: &mut Vec<u8>,
+    original_path_str: &str,
+    output_format: &str,
+    keep_metadata: bool,
+    strip_gps: bool,
+) -> Result<(), String> {
+    if !keep_metadata || output_format.to_lowercase() == "tiff" { // FIXME: temporary solution until I find a way to write metadata to TIFF
+        return Ok(());
+    }
+
+    let file_type = match output_format.to_lowercase().as_str() {
+        "jpg" | "jpeg" => FileExtension::JPEG,
+        "png" => FileExtension::PNG { as_zTXt_chunk: true },
+        "tiff" => FileExtension::TIFF,
+        _ => return Ok(()),
+    };
+
+    let original_path = std::path::Path::new(original_path_str);
+    if !original_path.exists() {
+        eprintln!("Original file not found, cannot copy metadata: {}", original_path_str);
+        return Ok(());
+    }
+
+    if let Ok(mut metadata) = Metadata::new_from_path(original_path) {
+        if strip_gps {
+            let dummy_rational = uR64 { nominator: 0, denominator: 1 };
+            let dummy_rational_vec1 = vec![dummy_rational.clone()];
+            let dummy_rational_vec3 = vec![dummy_rational.clone(), dummy_rational.clone(), dummy_rational.clone()];
+
+            metadata.remove_tag(ExifTag::GPSVersionID([0,0,0,0].to_vec()));
+            metadata.remove_tag(ExifTag::GPSLatitudeRef("".to_string()));
+            metadata.remove_tag(ExifTag::GPSLatitude(dummy_rational_vec3.clone()));
+            metadata.remove_tag(ExifTag::GPSLongitudeRef("".to_string()));
+            metadata.remove_tag(ExifTag::GPSLongitude(dummy_rational_vec3.clone()));
+            metadata.remove_tag(ExifTag::GPSAltitudeRef(vec![0]));
+            metadata.remove_tag(ExifTag::GPSAltitude(dummy_rational_vec1.clone()));
+            metadata.remove_tag(ExifTag::GPSTimeStamp(dummy_rational_vec3.clone()));
+            metadata.remove_tag(ExifTag::GPSSatellites("".to_string()));
+            metadata.remove_tag(ExifTag::GPSStatus("".to_string()));
+            metadata.remove_tag(ExifTag::GPSMeasureMode("".to_string()));
+            metadata.remove_tag(ExifTag::GPSDOP(dummy_rational_vec1.clone()));
+            metadata.remove_tag(ExifTag::GPSSpeedRef("".to_string()));
+            metadata.remove_tag(ExifTag::GPSSpeed(dummy_rational_vec1.clone()));
+            metadata.remove_tag(ExifTag::GPSTrackRef("".to_string()));
+            metadata.remove_tag(ExifTag::GPSTrack(dummy_rational_vec1.clone()));
+            metadata.remove_tag(ExifTag::GPSImgDirectionRef("".to_string()));
+            metadata.remove_tag(ExifTag::GPSImgDirection(dummy_rational_vec1.clone()));
+            metadata.remove_tag(ExifTag::GPSMapDatum("".to_string()));
+            metadata.remove_tag(ExifTag::GPSDestLatitudeRef("".to_string()));
+            metadata.remove_tag(ExifTag::GPSDestLatitude(dummy_rational_vec3.clone()));
+            metadata.remove_tag(ExifTag::GPSDestLongitudeRef("".to_string()));
+            metadata.remove_tag(ExifTag::GPSDestLongitude(dummy_rational_vec3.clone()));
+            metadata.remove_tag(ExifTag::GPSDestBearingRef("".to_string()));
+            metadata.remove_tag(ExifTag::GPSDestBearing(dummy_rational_vec1.clone()));
+            metadata.remove_tag(ExifTag::GPSDestDistanceRef("".to_string()));
+            metadata.remove_tag(ExifTag::GPSDestDistance(dummy_rational_vec1.clone()));
+            metadata.remove_tag(ExifTag::GPSProcessingMethod(vec![]));
+            metadata.remove_tag(ExifTag::GPSAreaInformation(vec![]));
+            metadata.remove_tag(ExifTag::GPSDateStamp("".to_string()));
+            metadata.remove_tag(ExifTag::GPSDifferential(vec![0u16]));
+            metadata.remove_tag(ExifTag::GPSHPositioningError(dummy_rational_vec1.clone()));
+        }
+
+        metadata.set_tag(ExifTag::Orientation(vec![1u16]));
+
+        if metadata.write_to_vec(image_bytes, file_type).is_err() {
+            eprintln!("Failed to write metadata to image vector for {}", original_path_str);
+        }
+    } else {
+        eprintln!("Failed to read metadata from original file: {}", original_path_str);
+    }
+
     Ok(())
 }
 
@@ -908,186 +985,6 @@ async fn generate_ai_subject_mask(
 }
 
 #[tauri::command]
-fn save_metadata_and_update_thumbnail(
-    path: String,
-    adjustments: Value,
-    app_handle: tauri::AppHandle,
-) -> Result<(), String> {
-    let sidecar_path = get_sidecar_path(&path);
-
-    let metadata = ImageMetadata {
-        version: 1,
-        rating: adjustments["rating"].as_u64().unwrap_or(0) as u8,
-        adjustments,
-    };
-
-    let json_string = serde_json::to_string_pretty(&metadata).map_err(|e| e.to_string())?;
-    std::fs::write(sidecar_path, json_string).map_err(|e| e.to_string())?;
-
-    thread::spawn(move || {
-        let _ = app_handle.emit("thumbnail-progress", serde_json::json!({ "completed": 0, "total": 1 }));
-        let _ = file_management::generate_thumbnails_progressive(vec![path], app_handle);
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-fn apply_adjustments_to_paths(
-    paths: Vec<String>,
-    adjustments: Value,
-    app_handle: tauri::AppHandle,
-) -> Result<(), String> {
-    paths.par_iter().for_each(|path| {
-        let sidecar_path = get_sidecar_path(path);
-
-        let existing_metadata: ImageMetadata = if sidecar_path.exists() {
-            fs::read_to_string(&sidecar_path)
-                .ok()
-                .and_then(|content| serde_json::from_str(&content).ok())
-                .unwrap_or_default()
-        } else {
-            ImageMetadata::default()
-        };
-
-        let mut new_adjustments = existing_metadata.adjustments;
-        if new_adjustments.is_null() {
-            new_adjustments = serde_json::json!({});
-        }
-        
-        if let (Some(new_map), Some(pasted_map)) = (new_adjustments.as_object_mut(), adjustments.as_object()) {
-            for (k, v) in pasted_map {
-                new_map.insert(k.clone(), v.clone());
-            }
-        }
-
-        let metadata = ImageMetadata {
-            version: 1,
-            rating: new_adjustments["rating"].as_u64().unwrap_or(0) as u8,
-            adjustments: new_adjustments,
-        };
-
-        if let Ok(json_string) = serde_json::to_string_pretty(&metadata) {
-            let _ = std::fs::write(sidecar_path, json_string);
-        }
-    });
-
-    thread::spawn(move || {
-        let _ = file_management::generate_thumbnails_progressive(paths, app_handle);
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-fn reset_adjustments_for_paths(paths: Vec<String>, app_handle: tauri::AppHandle) -> Result<(), String> {
-    paths.par_iter().for_each(|path| {
-        let sidecar_path = get_sidecar_path(path);
-
-        let existing_metadata: ImageMetadata = if sidecar_path.exists() {
-            fs::read_to_string(&sidecar_path)
-                .ok()
-                .and_then(|content| serde_json::from_str(&content).ok())
-                .unwrap_or_default()
-        } else {
-            ImageMetadata::default()
-        };
-
-        let new_adjustments = serde_json::json!({
-            "rating": existing_metadata.rating
-        });
-        
-        let metadata = ImageMetadata {
-            version: 1,
-            rating: existing_metadata.rating,
-            adjustments: new_adjustments,
-        };
-
-        if let Ok(json_string) = serde_json::to_string_pretty(&metadata) {
-            let _ = std::fs::write(sidecar_path, json_string);
-        }
-    });
-
-    thread::spawn(move || {
-        let _ = file_management::generate_thumbnails_progressive(paths, app_handle);
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-fn load_metadata(path: String) -> Result<ImageMetadata, String> {
-    let sidecar_path = get_sidecar_path(&path);
-    if sidecar_path.exists() {
-        let file_content = std::fs::read_to_string(sidecar_path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&file_content).map_err(|e| e.to_string())
-    } else {
-        Ok(ImageMetadata::default())
-    }
-}
-
-fn get_presets_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let presets_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("presets");
-
-    if !presets_dir.exists() {
-        fs::create_dir_all(&presets_dir).map_err(|e| e.to_string())?;
-    }
-
-    Ok(presets_dir.join("presets.json"))
-}
-
-#[tauri::command]
-fn load_presets(app_handle: tauri::AppHandle) -> Result<Vec<Preset>, String> {
-    let path = get_presets_path(&app_handle)?;
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&content).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn save_presets(presets: Vec<Preset>, app_handle: tauri::AppHandle) -> Result<(), String> {
-    let path = get_presets_path(&app_handle)?;
-    let json_string = serde_json::to_string_pretty(&presets).map_err(|e| e.to_string())?;
-    fs::write(path, json_string).map_err(|e| e.to_string())
-}
-
-fn get_settings_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let settings_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-
-    if !settings_dir.exists() {
-        fs::create_dir_all(&settings_dir).map_err(|e| e.to_string())?;
-    }
-
-    Ok(settings_dir.join("settings.json"))
-}
-
-#[tauri::command]
-fn load_settings(app_handle: tauri::AppHandle) -> Result<AppSettings, String> {
-    let path = get_settings_path(&app_handle)?;
-    if !path.exists() {
-        return Ok(AppSettings::default());
-    }
-    let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&content).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn save_settings(settings: AppSettings, app_handle: tauri::AppHandle) -> Result<(), String> {
-    let path = get_settings_path(&app_handle)?;
-    let json_string = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    fs::write(path, json_string).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 fn generate_preset_preview(
     js_adjustments: serde_json::Value,
     state: tauri::State<AppState>,
@@ -1120,155 +1017,49 @@ fn generate_preset_preview(
     encode_to_base64(&processed_image, 50)
 }
 
-#[tauri::command]
-fn handle_import_presets_from_file(file_path: String, app_handle: tauri::AppHandle) -> Result<Vec<Preset>, String> {
-    let content = fs::read_to_string(file_path).map_err(|e| format!("Failed to read preset file: {}", e))?;
-    let imported_preset_file: PresetFile = serde_json::from_str(&content).map_err(|e| format!("Failed to parse preset file: {}", e))?;
-
-    let mut current_presets = load_presets(app_handle.clone())?;
-    let mut current_preset_names: HashMap<String, usize> = current_presets.iter().map(|p| (p.name.clone(), 1)).collect();
-
-    for mut imported_preset in imported_preset_file.presets {
-        imported_preset.id = Uuid::new_v4().to_string();
-
-        let mut new_name = imported_preset.name.clone();
-        let mut counter = 1;
-        while current_preset_names.contains_key(&new_name) {
-            new_name = format!("{} ({})", imported_preset.name, counter);
-            counter += 1;
-        }
-        imported_preset.name = new_name;
-        current_preset_names.insert(imported_preset.name.clone(), 1);
-        current_presets.push(imported_preset);
-    }
-
-    save_presets(current_presets.clone(), app_handle)?;
-    Ok(current_presets)
-}
-
-#[tauri::command]
-fn handle_export_presets_to_file(presets_to_export: Vec<Preset>, file_path: String) -> Result<(), String> {
-    let preset_file = PresetFile { presets: presets_to_export };
-    let json_string = serde_json::to_string_pretty(&preset_file).map_err(|e| format!("Failed to serialize presets: {}", e))?;
-    fs::write(file_path, json_string).map_err(|e| format!("Failed to write preset file: {}", e))
-}
-
-#[tauri::command]
-fn clear_all_sidecars(root_path: String) -> Result<usize, String> {
-    if !Path::new(&root_path).exists() {
-        return Err(format!("Root path does not exist: {}", root_path));
-    }
-
-    let mut deleted_count = 0;
-    let walker = WalkDir::new(root_path).into_iter();
-
-    for entry in walker.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.is_file() {
-            if let Some(extension) = path.extension() {
-                if extension == "rrdata" {
-                    if fs::remove_file(path).is_ok() {
-                        deleted_count += 1;
-                    } else {
-                        eprintln!("Failed to delete sidecar file: {:?}", path);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(deleted_count)
-}
-
-#[tauri::command]
-fn clear_thumbnail_cache(app_handle: tauri::AppHandle) -> Result<(), String> {
-    let cache_dir = app_handle
-        .path()
-        .app_cache_dir()
-        .map_err(|e| e.to_string())?;
-    let thumb_cache_dir = cache_dir.join("thumbnails");
-
-    if thumb_cache_dir.exists() {
-        fs::remove_dir_all(&thumb_cache_dir).map_err(|e| format!("Failed to remove thumbnail cache: {}", e))?;
-    }
-    
-    fs::create_dir_all(&thumb_cache_dir).map_err(|e| format!("Failed to recreate thumbnail cache directory: {}", e))?;
-
-    Ok(())
-}
-
-#[tauri::command]
-fn show_in_finder(path: String) -> Result<(), String> {
+fn apply_window_effect(theme: String, window: impl raw_window_handle::HasWindowHandle) {
     #[cfg(target_os = "windows")]
     {
-        Command::new("explorer")
-            .args(["/select,", &path])
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .args(["-R", &path])
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    {
-        if let Some(parent) = Path::new(&path).parent() {
-            Command::new("xdg-open")
-                .arg(parent)
-                .spawn()
-                .map_err(|e| e.to_string())?;
-        } else {
-            return Err("Could not get parent directory".into());
-        }
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-fn delete_files_from_disk(paths: Vec<String>) -> Result<(), String> {
-    trash::delete_all(&paths).map_err(|e| e.to_string())?;
-
-    for path in paths {
-        let sidecar_path = get_sidecar_path(&path);
-        if sidecar_path.exists() {
-            let _ = trash::delete(&sidecar_path);
-        }
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-fn update_window_effect(theme: String, window: tauri::Window) {
-    #[cfg(target_os = "windows")]
-    {
-        let color = if theme == "light" {
-            Some((250, 250, 250, 150))
-        } else if theme == "muted-green" {
-            Some((44, 56, 54, 100))
-        } else {
-            Some((26, 29, 27, 60))
+        let color = match theme.as_str() {
+            "light" => Some((250, 250, 250, 150)),
+            "muted-green" => Some((44, 56, 54, 100)),
+            _ => Some((26, 29, 27, 60)),
         };
-        window_vibrancy::apply_acrylic(&window, color)
-            .expect("Unsupported platform! 'apply_acrylic' is only supported on Windows");
+
+        let info = os_info::get();
+
+        let is_win11_or_newer = match info.version() {
+            os_info::Version::Semantic(major, _, build) => *major == 10 && *build >= 22000,
+            _ => false,
+        };
+
+        if is_win11_or_newer {
+            window_vibrancy::apply_acrylic(&window, color)
+                .expect("Failed to apply acrylic effect on Windows 11");
+        } else {
+            window_vibrancy::apply_blur(&window, color)
+                .expect("Failed to apply blur effect on Windows 10 or older");
+        }
     }
 
     #[cfg(target_os = "macos")]
     {
-        let material = if theme == "light" {
-            window_vibrancy::NSVisualEffectMaterial::ContentBackground
-        } else {
-            window_vibrancy::NSVisualEffectMaterial::HudWindow
+        let material = match theme.as_str() {
+            "light" => window_vibrancy::NSVisualEffectMaterial::ContentBackground,
+            _ => window_vibrancy::NSVisualEffectMaterial::HudWindow,
         };
         window_vibrancy::apply_vibrancy(&window, material, None, None)
             .expect("Unsupported platform! 'apply_vibrancy' is only supported on macOS");
     }
+
+    #[cfg(target_os = "linux")]
+    {
+    }
+}
+
+#[tauri::command]
+fn update_window_effect(theme: String, window: tauri::Window) {
+    apply_window_effect(theme, window);
 }
 
 #[tauri::command]
@@ -1335,8 +1126,20 @@ async fn invoke_generative_replace(
     Ok(general_purpose::STANDARD.encode(&result_png_bytes))
 }
 
+#[tauri::command]
+fn get_supported_file_types() -> Result<serde_json::Value, String> {
+    let raw_extensions: Vec<&str> = crate::formats::RAW_EXTENSIONS.iter().map(|(ext, _)| *ext).collect();
+    let non_raw_extensions: Vec<&str> = crate::formats::NON_RAW_EXTENSIONS.to_vec();
+    
+    Ok(serde_json::json!({
+        "raw": raw_extensions,
+        "nonRaw": non_raw_extensions
+    }))
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -1387,62 +1190,45 @@ fn main() {
             let settings: AppSettings = load_settings(app_handle.clone()).unwrap_or_default();
             let window_cfg = app.config().app.windows.get(0).unwrap().clone();
             let transparent = settings.transparent.unwrap_or(window_cfg.transparent);
+            let decorations = settings.decorations.unwrap_or(window_cfg.decorations);
 
             let window = tauri::WebviewWindowBuilder::from_config(app.handle(), &window_cfg)
                 .unwrap()
                 .transparent(transparent)
+                .decorations(decorations)
                 .build()
                 .expect("Failed to build window");
 
             if transparent {
-                let theme = settings.theme.unwrap_or_else(|| "dark".to_string());
-
-                #[cfg(target_os = "macos")]
-                {
-                    let material = if theme == "light" {
-                        NSVisualEffectMaterial::ContentBackground
-                    } else {
-                        NSVisualEffectMaterial::HudWindow
-                    };
-                    apply_vibrancy(&window, material, None, None).expect(
-                        "Unsupported platform! 'apply_vibrancy' is only supported on macOS",
-                    );
-                }
-
-                #[cfg(target_os = "windows")]
-                {
-                    let color = if theme == "light" {
-                        Some((250, 250, 250, 150))
-                    } else if theme == "muted-green" {
-                        Some((44, 56, 54, 100))
-                    } else {
-                        Some((26, 29, 27, 60))
-                    };
-                    apply_acrylic(&window, color).expect(
-                        "Unsupported platform! 'apply_acrylic' is only supported on Windows",
-                    );
-                }
+                let theme = settings.theme.unwrap_or("dark".to_string());
+                apply_window_effect(theme, &window);
             }
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            show_in_finder,
-            delete_files_from_disk,
             load_image,
             apply_adjustments,
             export_image,
             batch_export_images,
             cancel_export,
             generate_fullscreen_preview,
-            save_metadata_and_update_thumbnail,
-            apply_adjustments_to_paths,
-            load_metadata,
+            generate_preset_preview,
+            generate_uncropped_preview,
+            generate_mask_overlay,
+            generate_ai_subject_mask,
+            generate_ai_foreground_mask,
+            update_window_effect,
+            check_comfyui_status,
+            test_comfyui_connection,
+            invoke_generative_replace,
+            get_supported_file_types,
             image_processing::generate_histogram,
             image_processing::generate_waveform,
             image_processing::load_file_data,
             image_processing::read_file_data,
             lut_cube::apply_lut_type_gpu,
+            image_processing::calculate_auto_adjustments,
             file_management::list_images_in_dir,
             file_management::get_folder_tree,
             file_management::get_file_tree,
@@ -1454,24 +1240,22 @@ fn main() {
             file_management::move_files,
             file_management::rename_folder,
             file_management::duplicate_file,
-            load_presets,
-            save_presets,
-            generate_preset_preview,
-            generate_uncropped_preview,
-            generate_mask_overlay,
-            generate_ai_subject_mask,
-            generate_ai_foreground_mask,
-            load_settings,
-            save_settings,
-            reset_adjustments_for_paths,
-            handle_import_presets_from_file,
-            handle_export_presets_to_file,
-            clear_all_sidecars,
-            clear_thumbnail_cache,
-            update_window_effect,
-            check_comfyui_status,
-            test_comfyui_connection,
-            invoke_generative_replace
+            file_management::show_in_finder,
+            file_management::delete_files_from_disk,
+            file_management::delete_files_with_associated,
+            file_management::save_metadata_and_update_thumbnail,
+            file_management::apply_adjustments_to_paths,
+            file_management::load_metadata,
+            file_management::load_presets,
+            file_management::save_presets,
+            file_management::load_settings,
+            file_management::save_settings,
+            file_management::reset_adjustments_for_paths,
+            file_management::apply_auto_adjustments_to_paths,
+            file_management::handle_import_presets_from_file,
+            file_management::handle_export_presets_to_file,
+            file_management::clear_all_sidecars,
+            file_management::clear_thumbnail_cache
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -322,7 +322,7 @@ const ImageCanvas = memo(({
   isMasking, imageRenderSize, showOriginal, finalPreviewUrl, isAdjusting,
   uncroppedAdjustedPreviewUrl, maskOverlayUrl,
   onSelectMask, activeMaskId, activeMaskContainerId,
-  updateSubMask, setIsMaskHovered,
+  updateSubMask, setIsMaskHovered, isMaskControlHovered,
   brushSettings, onGenerateAiMask, aiTool, onAiMaskDrawingComplete
 }) => {
   const [isCropViewVisible, setIsCropViewVisible] = useState(false);
@@ -336,7 +336,6 @@ const ImageCanvas = memo(({
   const currentLine = useRef(null);
   const [previewLine, setPreviewLine] = useState(null);
   const [cursorPreview, setCursorPreview] = useState({ x: 0, y: 0, visible: false });
-  const [isMouseOverCanvas, setIsMouseOverCanvas] = useState(false);
 
   const activeContainer = useMemo(() => 
     adjustments.masks.find(c => c.id === activeMaskContainerId), 
@@ -596,14 +595,12 @@ const ImageCanvas = memo(({
   }, [isGenerativeReplaceActive, isBrushActive, isAiSubjectActive, activeSubMask, activeMaskId, updateSubMask, adjustments.crop, imageRenderSize.scale, brushSettings, onGenerateAiMask, onAiMaskDrawingComplete, selectedImage.width, selectedImage.height]);
 
   const handleMouseEnter = useCallback(() => {
-    setIsMouseOverCanvas(true);
     if (isGenerativeReplaceActive || isBrushActive || isAiSubjectActive) {
       setCursorPreview(p => ({ ...p, visible: true }));
     }
   }, [isGenerativeReplaceActive, isBrushActive, isAiSubjectActive]);
 
   const handleMouseLeave = useCallback(() => {
-    setIsMouseOverCanvas(false);
     setCursorPreview(p => ({ ...p, visible: false }));
     if (isDrawing.current) {
       handleMouseUp();
@@ -695,7 +692,7 @@ const ImageCanvas = memo(({
                   height: `${imageRenderSize.height}px`,
                   left: `${imageRenderSize.offsetX}px`,
                   top: `${imageRenderSize.offsetY}px`,
-                  opacity: (showOriginal || !isMouseOverCanvas) ? 0 : 1,
+                  opacity: (showOriginal || isMaskControlHovered) ? 0 : 1,
                   transition: 'opacity 150ms ease-in-out',
                 }}
               />

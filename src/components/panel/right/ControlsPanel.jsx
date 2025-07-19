@@ -1,11 +1,11 @@
-import { RotateCcw, Copy, ClipboardPaste } from 'lucide-react';
+import { RotateCcw, Copy, ClipboardPaste, Aperture } from 'lucide-react';
 import BasicAdjustments from '../../adjustments/Basic';
 import CurveGraph from '../../adjustments/Curves';
 import ColorPanel from '../../adjustments/Color';
 import DetailsPanel from '../../adjustments/Details';
 import EffectsPanel from '../../adjustments/Effects';
 import CollapsibleSection from '../../ui/CollapsibleSection';
-import { INITIAL_ADJUSTMENTS, ADJUSTMENT_SECTIONS } from '../../../App';
+import { INITIAL_ADJUSTMENTS, ADJUSTMENT_SECTIONS } from '../../../utils/adjustments';
 import { useContextMenu } from '../../../context/ContextMenuContext';
 
 export default function Controls({
@@ -18,6 +18,7 @@ export default function Controls({
   setCollapsibleState,
   copiedSectionAdjustments,
   setCopiedSectionAdjustments,
+  handleAutoAdjustments,
 }) {
   const { showContextMenu } = useContextMenu();
 
@@ -104,14 +105,24 @@ export default function Controls({
     <div className="flex flex-col h-full">
       <div className="p-4 flex justify-between items-center flex-shrink-0 border-b border-surface">
         <h2 className="text-xl font-bold text-primary text-shadow-shiny">Adjustments</h2>
-        <button
-          onClick={handleResetAdjustments}
-          disabled={!selectedImage}
-          className="p-2 rounded-full hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          title="Reset All Adjustments"
-        >
-          <RotateCcw size={18} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleAutoAdjustments}
+            disabled={!selectedImage}
+            className="p-2 rounded-full hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Auto Adjustments"
+          >
+            <Aperture size={18} />
+          </button>
+          <button
+            onClick={handleResetAdjustments}
+            disabled={!selectedImage}
+            className="p-2 rounded-full hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Reset All Adjustments"
+          >
+            <RotateCcw size={18} />
+          </button>
+        </div>
       </div>
       <div className="flex-grow overflow-y-auto p-4 flex flex-col gap-2">
         {Object.keys(ADJUSTMENT_SECTIONS).map(sectionName => {

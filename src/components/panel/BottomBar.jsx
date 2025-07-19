@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import { Star, Copy, ClipboardPaste, RotateCcw, ChevronUp, ChevronDown, Check, Save } from 'lucide-react';
 import clsx from 'clsx';
 import Filmstrip from './Filmstrip';
@@ -66,6 +67,44 @@ export default function BottomBar({
   filmstripHeight,
   isResizing,
 }) {
+  const [sliderValue, setSliderValue] = useState(zoom);
+  const isDraggingSlider = useRef(false);
+  const syncTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    if (!isDraggingSlider.current) {
+      setSliderValue(zoom);
+    }
+  }, [zoom]);
+
+  useEffect(() => {
+    return () => {
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleSliderChange = (e) => {
+    const newZoom = parseFloat(e.target.value);
+    setSliderValue(newZoom);
+    onZoomChange(newZoom);
+  };
+
+  const handleMouseDown = () => {
+    isDraggingSlider.current = true;
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
+  };
+
+  const handleMouseUp = () => {
+    isDraggingSlider.current = false;
+    syncTimeoutRef.current = setTimeout(() => {
+      setSliderValue(zoom);
+    }, 300);
+  };
+
   return (
     <div className="flex-shrink-0 bg-bg-secondary rounded-lg flex flex-col">
       {!isLibraryView && (
@@ -155,11 +194,13 @@ export default function BottomBar({
                 min={minZoom}
                 max={maxZoom}
                 step="0.05"
-                value={zoom}
-                onChange={(e) => onZoomChange(parseFloat(e.target.value))}
+                value={sliderValue}
+                onChange={handleSliderChange}
+                onMouseDown={handleMouseDown}
+                onMouseUp={handleMouseUp}
                 className="w-full h-1 bg-surface rounded-lg appearance-none cursor-pointer accent-accent"
               />
-              <span className="text-xs text-text-secondary w-10 text-right">{(zoom * 100).toFixed(0)}%</span>
+              <span className="text-xs text-text-secondary w-10 text-right">{(sliderValue * 100).toFixed(0)}%</span>
             </div>
             <button
               onClick={() => setIsFilmstripVisible(!isFilmstripVisible)}

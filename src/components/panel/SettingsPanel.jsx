@@ -7,7 +7,7 @@ import ConfirmModal from '../modals/ConfirmModal';
 import Dropdown from '../ui/Dropdown';
 import Switch from '../ui/Switch';
 import Input from '../ui/Input';
-import { THEMES, DEFAULT_THEME_ID } from '../../themes';
+import { THEMES, DEFAULT_THEME_ID } from '../../utils/themes';
 
 const resolutions = [
   { value: 720, label: '720px' },
@@ -165,7 +165,7 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
             <h2 className="text-xl font-semibold mb-4 text-accent">General Settings</h2>
             <div className="space-y-4">
               <div>
-                <label htmlFor="theme-select" className="block text-sm font-medium text-text-secondary mb-2">
+                <label htmlFor="theme-select" className="block text-sm font-medium text-text-primary mb-2">
                   Theme
                 </label>
                 <Dropdown
@@ -179,10 +179,26 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
               </div>
 
               <div>
-                <label htmlFor="theme-select" className="block text-sm font-medium text-text-secondary mb-2">
+                <label htmlFor="adaptive-theme-toggle" className="block text-sm font-medium text-text-primary mb-2">
+                  Editor Theme
+                </label>
+                <Switch
+                  id="adaptive-theme-toggle"
+                  label="Adaptive Editor Theme"
+                  checked={appSettings?.adaptiveEditorTheme ?? false}
+                  onChange={(checked) => onSettingsChange({ ...appSettings, adaptiveEditorTheme: checked })}
+                />
+                <p className="text-xs text-text-secondary mt-2">
+                  Dynamically changes editor colors based on the current image.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="window-effects-toggle" className="block text-sm font-medium text-text-primary mb-2">
                   Window Effects
                 </label>
                 <Switch
+                  id="window-effects-toggle"
                   label="Transparency"
                   checked={appSettings?.transparent ?? true}
                   onChange={handleSetTransparent}
@@ -190,7 +206,7 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
               </div>
 
               <div className="pt-6 mt-6 border-t border-border-color">
-                <label htmlFor="preview-resolution" className="block text-sm font-medium text-text-secondary mb-2">
+                <label htmlFor="preview-resolution" className="block text-sm font-medium text-text-primary mb-2">
                   Preview Resolution
                 </label>
                 <Dropdown
@@ -208,7 +224,7 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
           <div className="p-6 bg-surface rounded-xl shadow-md">
             <h2 className="text-xl font-semibold mb-4 text-accent">Integrations</h2>
             <div>
-              <label htmlFor="comfyui-address" className="block text-sm font-medium text-text-secondary mb-2">
+              <label htmlFor="comfyui-address" className="block text-sm font-medium text-text-primary mb-2">
                 ComfyUI Address
               </label>
               <div className="flex items-center gap-2">

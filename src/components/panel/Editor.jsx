@@ -27,10 +27,9 @@ export default function Editor({
   showOriginal, setShowOriginal, isAdjusting, onBackToLibrary, isLoading, isFullScreen,
   isFullScreenLoading, fullScreenUrl, onToggleFullScreen, activeRightPanel,
   adjustments, setAdjustments, activeMaskId, activeMaskContainerId,
-  onSelectMask, updateSubMask,
-  transformWrapperRef, onZoomed, onContextMenu,
+  onSelectMask, updateSubMask, transformWrapperRef, onZoomed, onContextMenu,
   onUndo, onRedo, canUndo, canRedo, brushSettings, 
-  onGenerateAiMask, aiTool, onAiMaskDrawingComplete,
+  onGenerateAiMask, aiTool, onAiMaskDrawingComplete, isMaskControlHovered,
   targetZoom, waveform, isWaveformVisible, onCloseWaveform,
 }) {
   const [crop, setCrop] = useState();
@@ -193,6 +192,19 @@ export default function Editor({
 
   const toggleShowOriginal = useCallback(() => setShowOriginal(prev => !prev), [setShowOriginal]);
 
+  const doubleClickProps = useMemo(() => {
+    if (isCropping || isMasking) {
+      return { 
+        disabled: true,
+      };
+    }
+    return {
+      mode: transformState.scale >= 2 ? 'reset' : 'zoomIn',
+      animationTime: 200,
+      animationType: 'easeOut',
+    };
+  }, [isCropping, isMasking, transformState.scale]);  
+
   if (!selectedImage) {
     return (
       <div className="flex-1 bg-bg-secondary rounded-lg flex items-center justify-center text-text-secondary">
@@ -259,7 +271,7 @@ export default function Editor({
             maxScale={10}
             limitToBounds={true}
             centerZoomedOut={true}
-            doubleClick={{ disabled: true }}
+            doubleClick={doubleClickProps}
             panning={{ disabled: isPanningDisabled }}
             onTransformed={(_, state) => {
               setTransformState(state);
@@ -291,6 +303,7 @@ export default function Editor({
                 onGenerateAiMask={onGenerateAiMask}
                 aiTool={aiTool}
                 onAiMaskDrawingComplete={onAiMaskDrawingComplete}
+                isMaskControlHovered={isMaskControlHovered}
               />
             </TransformComponent>
           </TransformWrapper>

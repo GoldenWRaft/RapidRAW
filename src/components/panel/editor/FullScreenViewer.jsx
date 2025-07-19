@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, memo } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { X } from 'lucide-react';
 import clsx from 'clsx';
@@ -59,6 +59,14 @@ const FullScreenViewer = memo(({
     };
   }, [isOpen, handleClose]);
 
+  const doubleClickProps = useMemo(() => {
+    return {
+      mode: transformState.scale >= 2 ? 'reset' : 'zoomIn',
+      animationTime: 200,
+      animationType: 'easeOut',
+    };
+  }, [transformState.scale]);  
+
   if (!isMounted) {
     return null;
   }
@@ -94,7 +102,7 @@ const FullScreenViewer = memo(({
           minScale={0.8}
           maxScale={10}
           limitToBounds={true}
-          doubleClick={{ disabled: true }}
+          doubleClick={doubleClickProps}
           scale={transformState.scale}
           positionX={transformState.positionX}
           positionY={transformState.positionY}

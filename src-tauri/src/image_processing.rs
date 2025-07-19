@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::f32::consts::PI;
 use rawler::decoders::Orientation;
+use serde_json::json;
 
 pub use crate::gpu_processing::{get_or_init_gpu_context, process_and_get_dynamic_image};
 use crate::{AppState, mask_generation::MaskDefinition, load_settings};
@@ -99,6 +100,19 @@ pub fn apply_flip(image: DynamicImage, horizontal: bool, vertical: bool) -> Dyna
         img = img.flipv();
     }
     img
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AutoAdjustmentResults {
+    pub exposure: f64,
+    pub contrast: f64,
+    pub highlights: f64,
+    pub shadows: f64,
+    pub vibrancy: f64,
+    pub vignette_amount: f64,
+    pub temperature: f64,
+    pub tint: f64,
+    pub dehaze: f64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Pod, Zeroable, Default)]
@@ -240,12 +254,12 @@ struct AdjustmentScales {
 }
 
 const SCALES: AdjustmentScales = AdjustmentScales {
-    exposure: 25.0,
+    exposure: 1.0,
     contrast: 100.0,
     highlights: 100.0,
-    shadows: 500.0,
+    shadows: 200.0,
     whites: 30.0,
-    blacks: 50.0,
+    blacks: 60.0,
     saturation: 80.0,
     temperature: 30.0,
     tint: 200.0,
@@ -707,4 +721,208 @@ pub fn read_file_data(path: &str) -> Result<String, String> {
     let mut contents = String::new();
     file.read_to_string(&mut contents).map_err(|e| format!("Failed to read file: {}", e))?;
     Ok(contents)
+}
+
+pub fn perform_auto_analysis(image: &DynamicImage) -> AutoAdjustmentResults {
+    let analysis_preview = image.thumbnail(1024, 1024);
+    let rgb_image = analysis_preview.to_rgb8();
+    let total_pixels = (rgb_image.width() * rgb_image.height()) as f64;
+
+    let mut luma_hist = vec![0u32; 256];
+    let mut mean_saturation = 0.0f32;
+    let mut dull_pixel_count = 0;
+    let mut brightest_pixels = Vec::with_capacity((total_pixels * 0.01) as usize);
+
+    for pixel in rgb_image.pixels() {
+        let r_f = pixel[0] as f32;
+        let g_f = pixel[1] as f32;
+        let b_f = pixel[2] as f32;
+
+        let luma_val = (0.2126 * r_f + 0.7152 * g_f + 0.0722 * b_f).round() as usize;
+        luma_hist[luma_val.min(255)] += 1;
+
+        let r_norm = r_f / 255.0;
+        let g_norm = g_f / 255.0;
+        let b_norm = b_f / 255.0;
+        let max_c = r_norm.max(g_norm.max(b_norm));
+        let min_c = r_norm.min(g_norm.min(b_norm));
+        if max_c > 0.0 {
+            let s = (max_c - min_c) / max_c;
+            mean_saturation += s;
+            if s < 0.1 {
+                dull_pixel_count += 1;
+            }
+        }
+        brightest_pixels.push((luma_val, (r_f, g_f, b_f)));
+    }
+
+    if total_pixels > 0.0 {
+        mean_saturation /= total_pixels as f32;
+    }
+    let dull_pixel_percent = dull_pixel_count as f64 / total_pixels;
+
+    let mut black_point = 0;
+    let mut white_point = 255;
+    let clip_threshold = (total_pixels * 0.001) as u32;
+    let mut cumulative_sum = 0u32;
+    for i in 0..256 {
+        cumulative_sum += luma_hist[i];
+        if cumulative_sum > clip_threshold { black_point = i; break; }
+    }
+    cumulative_sum = 0;
+    for i in (0..256).rev() {
+        cumulative_sum += luma_hist[i];
+        if cumulative_sum > clip_threshold { white_point = i; break; }
+    }
+
+    let mid_point = (black_point + white_point) / 2;
+    let range = (white_point as f64 - black_point as f64).max(1.0);
+    let mut exposure = 0.0;
+    let mut contrast = 0.0;
+    if range > 20.0 {
+        exposure = (128.0 - mid_point as f64) * 0.35;
+        let target_range = 250.0;
+        if range < target_range {
+            contrast = (target_range / range - 1.0) * 50.0;
+        }
+    }
+
+    let shadow_percent = luma_hist[0..32].iter().sum::<u32>() as f64 / total_pixels;
+    let highlight_percent = luma_hist[224..256].iter().sum::<u32>() as f64 / total_pixels;
+    let mut shadows = 0.0;
+    if shadow_percent > 0.05 && black_point < 10 {
+        shadows = (shadow_percent * 150.0).min(80.0);
+    }
+    let mut highlights = 0.0;
+    if highlight_percent > 0.05 && white_point > 245 {
+        highlights = -(highlight_percent * 150.0).min(80.0);
+    }
+
+    brightest_pixels.sort_by(|a, b| b.0.cmp(&a.0));
+    let num_brightest = (total_pixels * 0.01).ceil() as usize;
+    let top_pixels = &brightest_pixels[..num_brightest.min(brightest_pixels.len())];
+    let mut bright_r = 0.0;
+    let mut bright_g = 0.0;
+    let mut bright_b = 0.0;
+    if !top_pixels.is_empty() {
+        for &(_, (r, g, b)) in top_pixels {
+            bright_r += r as f64;
+            bright_g += g as f64;
+            bright_b += b as f64;
+        }
+        bright_r /= top_pixels.len() as f64;
+        bright_g /= top_pixels.len() as f64;
+        bright_b /= top_pixels.len() as f64;
+    }
+
+    let mut temperature = 0.0;
+    let mut tint = 0.0;
+    if (bright_r - bright_b).abs() > 3.0 || (bright_g - (bright_r + bright_b) / 2.0).abs() > 3.0 {
+        temperature = (bright_b - bright_r) * 0.4;
+        tint = (bright_g - (bright_r + bright_b) / 2.0) * 0.5;
+    }
+
+    let mut vibrancy = 0.0;
+    let saturation_target = 0.20;
+    if mean_saturation < saturation_target {
+        vibrancy = (saturation_target - mean_saturation) as f64 * 150.0;
+    }
+    if dull_pixel_percent > 0.5 {
+        vibrancy += 10.0;
+    }
+
+    let mut dehaze = 0.0;
+    if range < 128.0 && mean_saturation < 0.15 {
+        dehaze = (1.0 - (range / 128.0)) * 40.0;
+    }
+
+    let (width, height) = rgb_image.dimensions();
+    let center_x_start = (width as f32 * 0.25) as u32;
+    let center_x_end = (width as f32 * 0.75) as u32;
+    let center_y_start = (height as f32 * 0.25) as u32;
+    let center_y_end = (height as f32 * 0.75) as u32;
+    let mut center_luma_sum = 0.0;
+    let mut center_pixel_count = 0;
+    let mut edge_luma_sum = 0.0;
+    let mut edge_pixel_count = 0;
+    for (x, y, pixel) in rgb_image.enumerate_pixels() {
+        let luma = (0.2126 * pixel[0] as f32 + 0.7152 * pixel[1] as f32 + 0.0722 * pixel[2] as f32) / 255.0;
+        if x >= center_x_start && x < center_x_end && y >= center_y_start && y < center_y_end {
+            center_luma_sum += luma;
+            center_pixel_count += 1;
+        } else {
+            edge_luma_sum += luma;
+            edge_pixel_count += 1;
+        }
+    }
+    let mut vignette_amount = 0.0;
+    let mut avg_center_luma = 0.0;
+    let mut avg_edge_luma = 0.0;
+    if center_pixel_count > 0 && edge_pixel_count > 0 {
+        avg_center_luma = center_luma_sum / center_pixel_count as f32;
+        avg_edge_luma = edge_luma_sum / edge_pixel_count as f32;
+        if avg_edge_luma < avg_center_luma {
+            let luma_diff = (avg_center_luma - avg_edge_luma).max(0.0);
+            vignette_amount = -(luma_diff as f64 * 150.0);
+        }
+    }
+
+    println!("\n--- Auto Adjustments Analysis ---");
+    println!("Tonal Range: black_point={:.1}, white_point={:.1}, mid_point={:.1}, range={:.1}", black_point, white_point, mid_point, range);
+    println!("Distribution: shadow_percent={:.2}%, highlight_percent={:.2}%", shadow_percent * 100.0, highlight_percent * 100.0);
+    println!("White Balance Trigger: bright_r={:.1}, bright_g={:.1}, bright_b={:.1}", bright_r, bright_g, bright_b);
+    println!("Saturation: mean_saturation={:.3}, dull_pixel_percent={:.2}%", mean_saturation, dull_pixel_percent * 100.0);
+    println!("Dehaze Trigger: range < 128.0 ({}), mean_saturation < 0.15 ({})", range < 128.0, mean_saturation < 0.15);
+    println!("Vignette: center_luma={:.3}, edge_luma={:.3}", avg_center_luma, avg_edge_luma);
+    println!("---------------------------------");
+    println!("Calculated Values (pre-clamp):");
+    println!("  Exposure: {:.2}, Contrast: {:.2}", exposure / 20.0, contrast);
+    println!("  Highlights: {:.2}, Shadows: {:.2}", highlights, shadows);
+    println!("  Temperature: {:.2}, Tint: {:.2}", temperature, tint);
+    println!("  Vibrance: {:.2}, Dehaze: {:.2}", vibrancy, dehaze);
+    println!("  Vignette: {:.2}", vignette_amount);
+    println!("---------------------------------\n");
+
+    AutoAdjustmentResults {
+        exposure: (exposure / 20.0).clamp(-5.0, 5.0),
+        contrast: contrast.clamp(0.0, 100.0),
+        highlights: highlights.clamp(-100.0, 0.0),
+        shadows: shadows.clamp(0.0, 100.0),
+        vibrancy: vibrancy.clamp(0.0, 80.0),
+        vignette_amount: vignette_amount.clamp(-100.0, 0.0),
+        temperature: temperature.clamp(-100.0, 100.0),
+        tint: tint.clamp(-100.0, 100.0),
+        dehaze: dehaze.clamp(0.0, 100.0),
+    }
+}
+
+pub fn auto_results_to_json(results: &AutoAdjustmentResults) -> serde_json::Value {
+    json!({
+        "exposure": results.exposure,
+        "contrast": results.contrast,
+        "highlights": results.highlights,
+        "shadows": results.shadows,
+        "vibrance": results.vibrancy,
+        "vignetteAmount": results.vignette_amount,
+        "temperature": results.temperature,
+        "tint": results.tint,
+        "dehaze": results.dehaze,
+        "sectionVisibility": {
+            "basic": true,
+            "color": true,
+            "effects": true
+        }
+    })
+}
+
+#[tauri::command]
+pub fn calculate_auto_adjustments(state: tauri::State<AppState>) -> Result<serde_json::Value, String> {
+    let original_image = state.original_image.lock().unwrap()
+        .as_ref()
+        .ok_or("No image loaded for auto adjustments")?
+        .image.clone();
+
+    let results = perform_auto_analysis(&original_image);
+
+    Ok(auto_results_to_json(&results))
 }

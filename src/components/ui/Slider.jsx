@@ -5,6 +5,7 @@ import React, { useState, useEffect, useRef } from 'react';
 /**
  * A reusable slider component with a clickable reset icon and an interactive handle.
  * The slider's thumb animates with an "ease-in-out" effect when the value is set programmatically.
+ * The numeric value can be clicked to manually input a precise value.
  * Double-clicking the label, value, or slider track will also reset the value.
  *
  * @param {string} label - The text label for the slider.
@@ -19,6 +20,9 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0 }) =>
   const [displayValue, setDisplayValue] = useState(Number(value));
   const [isDragging, setIsDragging] = useState(false);
   const animationFrameRef = useRef();
+  const [isEditing, setIsEditing] = useState(false);
+  const [inputValue, setInputValue] = useState(String(value));
+  const inputRef = useRef(null);
 
   useEffect(() => {
     const handleDragEndGlobal = () => {
@@ -55,9 +59,7 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0 }) =>
       if (!startTime) startTime = timestamp;
       const progress = timestamp - startTime;
       const linearFraction = Math.min(progress / duration, 1);
-
       const easedFraction = easeInOut(linearFraction);
-
       const currentValue = startValue + (endValue - startValue) * easedFraction;
       setDisplayValue(currentValue);
 
@@ -75,6 +77,19 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0 }) =>
     };
   }, [value, isDragging]);
 
+  useEffect(() => {
+    if (!isEditing) {
+      setInputValue(String(value));
+    }
+  }, [value, isEditing]);
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
   const handleReset = () => {
     const syntheticEvent = {
       target: {
@@ -89,13 +104,50 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0 }) =>
     onChange(e);
   };
 
+  const handleDragStart = () => setIsDragging(true);
+  const handleDragEnd = () => setIsDragging(false);
+
+  const handleValueClick = () => {
+    setIsEditing(true);
+  };
+
+  const handleInputChange = (e) => {
+    setInputValue(e.target.value);
+  };
+
+  const handleInputCommit = () => {
+    let newValue = parseFloat(inputValue);
+
+    if (isNaN(newValue)) {
+      newValue = Number(value);
+    } else {
+      newValue = Math.max(Number(min), Math.min(Number(max), newValue));
+    }
+
+    const syntheticEvent = {
+      target: {
+        value: newValue,
+      },
+    };
+    onChange(syntheticEvent);
+    setIsEditing(false);
+  };
+
+  const handleInputKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handleInputCommit();
+      e.target.blur();
+    } else if (e.key === 'Escape') {
+      setInputValue(String(value));
+      setIsEditing(false);
+      e.target.blur();
+    }
+  };
+
   const stepStr = String(step);
   const decimalPlaces = stepStr.includes('.') ? stepStr.split('.')[1].length : 0;
   
   const numericValue = isNaN(Number(value)) ? 0 : Number(value);
-
-  const handleDragStart = () => setIsDragging(true);
-  const handleDragEnd = () => setIsDragging(false);
 
   const ResetIcon = () => (
     <svg 
@@ -134,13 +186,31 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0 }) =>
             <ResetIcon />
           </button>
         </div>
-        <span 
-          className="text-sm text-text-primary w-12 text-right select-none cursor-pointer"
-          onDoubleClick={handleReset}
-          title={`Double-click to reset to ${defaultValue}`}
-        >
-          {numericValue.toFixed(decimalPlaces)}
-        </span>
+        <div className="w-12 text-right">
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              type="number"
+              value={inputValue}
+              onChange={handleInputChange}
+              onBlur={handleInputCommit}
+              onKeyDown={handleInputKeyDown}
+              min={min}
+              max={max}
+              step={step}
+              className="w-full text-sm text-right bg-card-active border border-gray-500 rounded px-1 py-0 outline-none focus:ring-1 focus:ring-blue-500 text-text-primary"
+            />
+          ) : (
+            <span 
+              className="text-sm text-text-primary w-full text-right select-none cursor-text"
+              onClick={handleValueClick}
+              onDoubleClick={handleReset}
+              title={`Click to edit, double-click to reset to ${defaultValue}`}
+            >
+              {label === 'Exposure' && numericValue === 0 ? '0' : numericValue.toFixed(decimalPlaces)}
+            </span>
+          )}
+        </div>
       </div>
       <input
         type="range"

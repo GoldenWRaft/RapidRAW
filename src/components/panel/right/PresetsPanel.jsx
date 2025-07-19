@@ -7,7 +7,7 @@ import { Plus, Loader2, FileUp, FileDown, Edit, Trash2, CopyPlus, RefreshCw } fr
 import { motion, AnimatePresence } from 'framer-motion';
 import AddPresetModal from '../../modals/AddPresetModal';
 import RenamePresetModal from '../../modals/RenamePresetModal';
-import { INITIAL_ADJUSTMENTS } from '../../../App';
+import { INITIAL_ADJUSTMENTS } from '../../../utils/adjustments';
 
 const itemVariants = {
   hidden: { opacity: 0, x: -15 },

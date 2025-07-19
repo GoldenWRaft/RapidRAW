@@ -1,6 +1,6 @@
 import { RotateCcw, X, RectangleHorizontal, RectangleVertical, FlipHorizontal, FlipVertical, RotateCw } from 'lucide-react';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { INITIAL_ADJUSTMENTS } from '../../../App';
+import { INITIAL_ADJUSTMENTS } from '../../../utils/adjustments';
 import clsx from 'clsx';
 
 const PRESETS = [

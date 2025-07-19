@@ -45,7 +45,11 @@ reqwest = { version = "0.12", features = ["json", "multipart"] }
 tokio-tungstenite = { version = "0.23", features = ["native-tls"] }
 futures-util = "0.3"
 tauri-plugin-process = "2"
-
+tauri-plugin-os = "2.3.0"
+raw-window-handle = "0.6.2"
+os_info = "3"
+little_exif = "0.6"
+chrono = "0.4"
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
