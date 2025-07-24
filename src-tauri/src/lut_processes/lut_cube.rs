@@ -78,12 +78,10 @@ pub async fn apply_lut_type_gpu(
     let image_bytes = general_purpose::STANDARD
         .decode(image_data.split(',').nth(1).unwrap_or(""))
         .map_err(|e| e.to_string())?;
-    println!("Here 1");
     let image = ImageReader::new(Cursor::new(&image_bytes))
         .with_guessed_format().map_err(|e| e.to_string())?
         .decode().map_err(|e| e.to_string())?
         .to_rgba8();
-    println!("Here 2");
     let (width, height) = image.dimensions();
 
     // ---- 2. Create GPU Textures ----
@@ -213,7 +211,7 @@ pub async fn apply_lut_type_gpu(
                     ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None, },
+                // wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None, },
             ],
         });
         (lut_texture, include_str!("../../shaders/hald_c_lut.wgsl"), layout)
@@ -247,17 +245,30 @@ pub async fn apply_lut_type_gpu(
         min_filter: wgpu::FilterMode::Linear,
         ..Default::default()
     });
-    
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("LUT Bind Group"),
-        layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&input_texture.create_view(&Default::default())) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&output_texture.create_view(&Default::default())) },
-            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&lut_texture.create_view(&Default::default())) },
-            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&lut_sampler) },
-        ],
-    });
+
+    let bind_group = if lut_type == "cube" {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Cube LUT Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&input_texture.create_view(&Default::default())) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&output_texture.create_view(&Default::default())) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&lut_texture.create_view(&Default::default())) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&lut_sampler) },
+            ],
+        })
+    } else {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Hald CLUT Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&input_texture.create_view(&Default::default())) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&output_texture.create_view(&Default::default())) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&lut_texture.create_view(&Default::default())) },
+                // No sampler for Hald CLUT
+            ],
+        })
+    };
 
     // ---- 5. Dispatch Compute Job ----
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("LUT Command Encoder") });
