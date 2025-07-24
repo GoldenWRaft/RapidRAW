@@ -305,7 +305,7 @@ const Cell = ({ columnIndex, rowIndex, style, data }) => {
 };
 
 export default function MainLibrary({
-  imageList, onImageClick, onImageDoubleClick, onContextMenu, onEmptyAreaContextMenu, multiSelectedPaths, activePath, rootPath, currentFolderPath, onOpenFolder, thumbnails, imageRatings, appSettings, onContinueSession, onGoHome, onClearSelection, sortCriteria, setSortCriteria, filterCriteria, setFilterCriteria, onSettingsChange, onLibraryRefresh, theme,
+  imageList, onImageClick, onImageDoubleClick, onContextMenu, onEmptyAreaContextMenu, multiSelectedPaths, activePath, rootPath, currentFolderPath, onOpenFolder, thumbnails, imageRatings, appSettings, onContinueSession, onGoHome, onClearSelection, sortCriteria, setSortCriteria, filterCriteria, setFilterCriteria, onSettingsChange, onLibraryRefresh, theme, initialScrollOffset, onScroll,
 }) {
   const [showSettings, setShowSettings] = useState(false);
   const [appVersion, setAppVersion] = useState('');
@@ -413,6 +413,8 @@ export default function MainLibrary({
                   columnWidth={cellWidth}
                   rowHeight={cellHeight}
                   itemData={{ imageList, columnCount, thumbnails, imageRatings, onImageClick, onImageDoubleClick, multiSelectedPaths, activePath, onContextMenu }}
+                  initialScrollTop={initialScrollOffset}
+                  onScroll={onScroll}
                 >{Cell}</Grid>
               );
             }}

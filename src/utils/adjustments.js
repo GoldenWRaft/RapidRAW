@@ -1,11 +1,19 @@
-// src/utils/adjustments.js
 import { v4 as uuidv4 } from 'uuid';
+
+const INITIAL_COLOR_GRADING = {
+  shadows: { h: 0, s: 0, lum: 0 },
+  midtones: { h: 0, s: 0, lum: 0 },
+  highlights: { h: 0, s: 0, lum: 0 },
+  blending: 50,
+  balance: 0,
+};
 
 export const INITIAL_MASK_ADJUSTMENTS = {
   exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0,
   saturation: 0, temperature: 0, tint: 0, vibrance: 0,
   sharpness: 0, lumaNoiseReduction: 0, colorNoiseReduction: 0,
   clarity: 0, dehaze: 0, structure: 0,
+  colorGrading: { ...INITIAL_COLOR_GRADING },
   hsl: {
     reds: { hue: 0, saturation: 0, luminance: 0 }, oranges: { hue: 0, saturation: 0, luminance: 0 },
     yellows: { hue: 0, saturation: 0, luminance: 0 }, greens: { hue: 0, saturation: 0, luminance: 0 },
@@ -41,6 +49,12 @@ export const INITIAL_ADJUSTMENTS = {
   clarity: 0, dehaze: 0, structure: 0,
   vignetteAmount: 0, vignetteMidpoint: 50, vignetteRoundness: 0, vignetteFeather: 50,
   grainAmount: 0, grainSize: 25, grainRoughness: 50,
+  enableNegativeConversion: false,
+  filmBaseColor: '#ff8800',
+  negativeRedBalance: 0,
+  negativeGreenBalance: 0,
+  negativeBlueBalance: 0,
+  colorGrading: { ...INITIAL_COLOR_GRADING },
   hsl: {
     reds: { hue: 0, saturation: 0, luminance: 0 }, oranges: { hue: 0, saturation: 0, luminance: 0 },
     yellows: { hue: 0, saturation: 0, luminance: 0 }, greens: { hue: 0, saturation: 0, luminance: 0 },
@@ -81,6 +95,7 @@ export const normalizeLoadedAdjustments = (loadedAdjustments) => {
       adjustments: {
         ...INITIAL_MASK_ADJUSTMENTS,
         ...containerAdjustments,
+        colorGrading: { ...INITIAL_MASK_ADJUSTMENTS.colorGrading, ...(containerAdjustments.colorGrading || {}) },
         hsl: { ...INITIAL_MASK_ADJUSTMENTS.hsl, ...(containerAdjustments.hsl || {}) },
         curves: { ...INITIAL_MASK_ADJUSTMENTS.curves, ...(containerAdjustments.curves || {}) },
         sectionVisibility: {
@@ -100,6 +115,7 @@ export const normalizeLoadedAdjustments = (loadedAdjustments) => {
   return {
     ...INITIAL_ADJUSTMENTS,
     ...loadedAdjustments,
+    colorGrading: { ...INITIAL_ADJUSTMENTS.colorGrading, ...(loadedAdjustments.colorGrading || {}) },
     hsl: { ...INITIAL_ADJUSTMENTS.hsl, ...(loadedAdjustments.hsl || {}) },
     curves: { ...INITIAL_ADJUSTMENTS.curves, ...(loadedAdjustments.curves || {}) },
     masks: normalizedMasks,
@@ -118,17 +134,19 @@ export const COPYABLE_ADJUSTMENT_KEYS = [
   'clarity', 'dehaze', 'structure',
   'vignetteAmount', 'vignetteMidpoint', 'vignetteRoundness', 'vignetteFeather',
   'grainAmount', 'grainSize', 'grainRoughness',
-  'hsl', 'curves', 'sectionVisibility',
+  'enableNegativeConversion', 'filmBaseColor', 'negativeRedBalance', 'negativeGreenBalance', 'negativeBlueBalance',
+  'hsl', 'curves', 'colorGrading', 'sectionVisibility',
 ];
 
 export const ADJUSTMENT_SECTIONS = {
   basic: ['exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks'],
   curves: ['curves'],
-  color: ['saturation', 'temperature', 'tint', 'vibrance', 'hsl'],
+  color: ['saturation', 'temperature', 'tint', 'vibrance', 'hsl', 'colorGrading'],
   details: ['sharpness', 'lumaNoiseReduction', 'colorNoiseReduction'],
   effects: [
     'clarity', 'dehaze', 'structure',
     'vignetteAmount', 'vignetteMidpoint', 'vignetteRoundness', 'vignetteFeather',
-    'grainAmount', 'grainSize', 'grainRoughness'
+    'grainAmount', 'grainSize', 'grainRoughness',
+    'enableNegativeConversion', 'filmBaseColor', 'negativeRedBalance', 'negativeGreenBalance', 'negativeBlueBalance'
   ],
 };

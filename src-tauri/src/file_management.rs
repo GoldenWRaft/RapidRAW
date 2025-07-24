@@ -20,7 +20,7 @@ use walkdir::WalkDir;
 
 use crate::gpu_processing;
 use crate::formats::is_supported_image_file;
-use crate::image_processing::{GpuContext};
+use crate::image_processing::GpuContext;
 use crate::image_loader;
 use crate::image_processing::{
     apply_crop, apply_flip, apply_rotation, auto_results_to_json, get_all_adjustments_from_json,
@@ -39,9 +39,24 @@ pub struct Preset {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PresetFile {
-    pub presets: Vec<Preset>,
+pub struct PresetFolder {
+    pub id: String,
+    pub name: String,
+    pub children: Vec<Preset>,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub enum PresetItem {
+    Preset(Preset),
+    Folder(PresetFolder),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PresetFile {
+    pub presets: Vec<PresetItem>,
+}
+
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +101,7 @@ pub struct AppSettings {
     pub comfyui_address: Option<String>,
     pub last_folder_state: Option<LastFolderState>,
     pub adaptive_editor_theme: Option<bool>,
+    pub ui_visibility: Option<Value>,
 }
 
 impl Default for AppSettings {
@@ -104,6 +120,7 @@ impl Default for AppSettings {
             comfyui_address: None,
             last_folder_state: None,
             adaptive_editor_theme: Some(false),
+            ui_visibility: None,
         }
     }
 }
@@ -1021,7 +1038,7 @@ fn get_presets_path(app_handle: &AppHandle) -> Result<std::path::PathBuf, String
 }
 
 #[tauri::command]
-pub fn load_presets(app_handle: AppHandle) -> Result<Vec<Preset>, String> {
+pub fn load_presets(app_handle: AppHandle) -> Result<Vec<PresetItem>, String> {
     let path = get_presets_path(&app_handle)?;
     if !path.exists() {
         return Ok(Vec::new());
@@ -1031,7 +1048,7 @@ pub fn load_presets(app_handle: AppHandle) -> Result<Vec<Preset>, String> {
 }
 
 #[tauri::command]
-pub fn save_presets(presets: Vec<Preset>, app_handle: AppHandle) -> Result<(), String> {
+pub fn save_presets(presets: Vec<PresetItem>, app_handle: AppHandle) -> Result<(), String> {
     let path = get_presets_path(&app_handle)?;
     let json_string = serde_json::to_string_pretty(&presets).map_err(|e| e.to_string())?;
     fs::write(path, json_string).map_err(|e| e.to_string())
@@ -1071,28 +1088,50 @@ pub fn save_settings(settings: AppSettings, app_handle: AppHandle) -> Result<(),
 pub fn handle_import_presets_from_file(
     file_path: String,
     app_handle: AppHandle,
-) -> Result<Vec<Preset>, String> {
+) -> Result<Vec<PresetItem>, String> {
     let content =
         fs::read_to_string(file_path).map_err(|e| format!("Failed to read preset file: {}", e))?;
     let imported_preset_file: PresetFile =
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse preset file: {}", e))?;
 
     let mut current_presets = load_presets(app_handle.clone())?;
-    let mut current_preset_names: HashMap<String, usize> =
-        current_presets.iter().map(|p| (p.name.clone(), 1)).collect();
+    
+    let mut current_names: HashSet<String> = current_presets.iter().map(|item| {
+        match item {
+            PresetItem::Preset(p) => p.name.clone(),
+            PresetItem::Folder(f) => f.name.clone(),
+        }
+    }).collect();
 
-    for mut imported_preset in imported_preset_file.presets {
-        imported_preset.id = Uuid::new_v4().to_string();
+    for mut imported_item in imported_preset_file.presets {
+        let (current_name, _new_id) = match &mut imported_item {
+            PresetItem::Preset(p) => {
+                p.id = Uuid::new_v4().to_string();
+                (p.name.clone(), p.id.clone())
+            },
+            PresetItem::Folder(f) => {
+                f.id = Uuid::new_v4().to_string();
+                for child in &mut f.children {
+                    child.id = Uuid::new_v4().to_string();
+                }
+                (f.name.clone(), f.id.clone())
+            },
+        };
 
-        let mut new_name = imported_preset.name.clone();
+        let mut new_name = current_name.clone();
         let mut counter = 1;
-        while current_preset_names.contains_key(&new_name) {
-            new_name = format!("{} ({})", imported_preset.name, counter);
+        while current_names.contains(&new_name) {
+            new_name = format!("{} ({})", current_name, counter);
             counter += 1;
         }
-        imported_preset.name = new_name;
-        current_preset_names.insert(imported_preset.name.clone(), 1);
-        current_presets.push(imported_preset);
+
+        match &mut imported_item {
+            PresetItem::Preset(p) => p.name = new_name.clone(),
+            PresetItem::Folder(f) => f.name = new_name.clone(),
+        }
+        
+        current_names.insert(new_name);
+        current_presets.push(imported_item);
     }
 
     save_presets(current_presets.clone(), app_handle)?;
@@ -1101,7 +1140,7 @@ pub fn handle_import_presets_from_file(
 
 #[tauri::command]
 pub fn handle_export_presets_to_file(
-    presets_to_export: Vec<Preset>,
+    presets_to_export: Vec<PresetItem>,
     file_path: String,
 ) -> Result<(), String> {
     let preset_file = PresetFile {

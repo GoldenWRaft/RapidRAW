@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
-import { centerCrop, makeAspectCrop } from 'react-image-crop';
 import { Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import { invoke } from '@tauri-apps/api/core';
@@ -14,14 +13,6 @@ import EditorToolbar from './editor/EditorToolbar';
 import ImageCanvas from './editor/ImageCanvas';
 import Waveform from './editor/Waveform';
 
-function centerAspectCrop(mediaWidth, mediaHeight, aspect) {
-  return centerCrop(
-    makeAspectCrop({ unit: '%', width: 100 }, aspect, mediaWidth, mediaHeight),
-    mediaWidth,
-    mediaHeight
-  );
-}
-
 export default function Editor({
   selectedImage, finalPreviewUrl, uncroppedAdjustedPreviewUrl,
   showOriginal, setShowOriginal, isAdjusting, onBackToLibrary, isLoading, isFullScreen,
@@ -33,6 +24,7 @@ export default function Editor({
   targetZoom, waveform, isWaveformVisible, onCloseWaveform,
 }) {
   const [crop, setCrop] = useState();
+  const prevCropParams = useRef(null);
   const [isMaskHovered, setIsMaskHovered] = useState(false);
   const [isLoaderVisible, setIsLoaderVisible] = useState(false);
   const [maskOverlayUrl, setMaskOverlayUrl] = useState(null);
@@ -142,6 +134,44 @@ export default function Editor({
 
   useEffect(() => {
     if (!isCropping || !selectedImage?.width) {
+      return;
+    }
+
+    const { rotation = 0, aspectRatio } = adjustments;
+    
+    const hasChanged = prevCropParams.current?.rotation !== rotation || prevCropParams.current?.aspectRatio !== aspectRatio;
+
+    if (hasChanged) {
+      const { width: imgWidth, height: imgHeight } = selectedImage;
+      const isSwapped = Math.abs(rotation % 180) === 90;
+      const W = isSwapped ? imgHeight : imgWidth;
+      const H = isSwapped ? imgWidth : imgHeight;
+      const A = aspectRatio || W / H;
+      if (isNaN(A)) return;
+
+      const angle = Math.abs(rotation);
+      const rad = (angle % 180) * Math.PI / 180;
+      const sin = Math.sin(rad);
+      const cos = Math.cos(rad);
+
+      const h_c = Math.min(H / (A * sin + cos), W / (A * cos + sin));
+      const w_c = A * h_c;
+
+      const maxPixelCrop = {
+        x: Math.round((W - w_c) / 2),
+        y: Math.round((H - h_c) / 2),
+        width: Math.round(w_c),
+        height: Math.round(h_c),
+      };
+      
+      prevCropParams.current = { rotation, aspectRatio };
+      setAdjustments(prev => ({ ...prev, crop: maxPixelCrop }));
+    }
+  }, [isCropping, adjustments.rotation, adjustments.aspectRatio, selectedImage?.width, selectedImage?.height, setAdjustments]);
+
+
+  useEffect(() => {
+    if (!isCropping || !selectedImage?.width) {
       setCrop(undefined);
       return;
     }
@@ -151,7 +181,7 @@ export default function Editor({
     const cropBaseWidth = isSwapped ? selectedImage.height : selectedImage.width;
     const cropBaseHeight = isSwapped ? selectedImage.width : selectedImage.height;
 
-    const { crop: pixelCrop, aspectRatio } = adjustments;
+    const { crop: pixelCrop } = adjustments;
 
     if (pixelCrop) {
       setCrop({
@@ -162,12 +192,13 @@ export default function Editor({
         height: (pixelCrop.height / cropBaseHeight) * 100,
       });
     } else {
-      setCrop(aspectRatio
-        ? centerAspectCrop(cropBaseWidth, cropBaseHeight, aspectRatio)
-        : { unit: '%', width: 100, height: 100, x: 0, y: 0 }
-      );
+      setCrop({ unit: '%', width: 100, height: 100, x: 0, y: 0 });
     }
-  }, [isCropping, adjustments.crop, adjustments.aspectRatio, adjustments.rotation, selectedImage]);
+  }, [isCropping, adjustments.crop, selectedImage]);
+
+  const handleCropChange = useCallback((pixelCrop, percentCrop) => {
+    setCrop(percentCrop);
+  }, []);
 
   const handleCropComplete = useCallback((_, pc) => {
     if (!pc.width || !pc.height || !selectedImage?.width) return;
@@ -282,7 +313,7 @@ export default function Editor({
               <ImageCanvas
                 isCropping={isCropping}
                 crop={crop}
-                setCrop={setCrop}
+                setCrop={handleCropChange}
                 handleCropComplete={handleCropComplete}
                 adjustments={adjustments}
                 selectedImage={selectedImage}

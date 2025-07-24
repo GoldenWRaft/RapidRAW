@@ -1,11 +1,11 @@
+import { useState } from 'react';
 import { Folder, FolderOpen, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, File } from 'lucide-react';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 
-function TreeNode({ node, onFolderSelect, selectedPath, isExpanded, onToggle, onContextMenu, expandedFolders, fileTree }) {
+function TreeNode({ node, onFolderSelect, selectedPath, isExpanded, onToggle, onContextMenu, expandedFolders, isTreeHovered, fileTree }) {
   const isFolder = node.is_dir;
   const hasChildren = node.children && node.children.length > 0;
-  const childFolders = node.children && node.children.map(item => item.is_dir).length > 0;
   const isSelected = node.path === selectedPath;
 
   const handleFolderIconClick = (e) => {
@@ -81,8 +81,18 @@ function TreeNode({ node, onFolderSelect, selectedPath, isExpanded, onToggle, on
         >
           {node.name}
         </span>
+        
         <div
           onClick={handleFolderIconClick}
+          className={clsx(
+            'p-0.5 rounded hover:bg-surface transition-opacity duration-200',
+            {
+              'cursor-pointer': hasChildren,
+              'cursor-default': !hasChildren,
+              'opacity-100': hasChildren && isTreeHovered,
+              'opacity-0': hasChildren && !isTreeHovered,
+            }
+          )}
         >
            {isFolder && (
           <div
@@ -132,6 +142,7 @@ function TreeNode({ node, onFolderSelect, selectedPath, isExpanded, onToggle, on
                       onToggle={onToggle}
                       onContextMenu={onContextMenu}
                       expandedFolders={expandedFolders}
+                      isTreeHovered={isTreeHovered}
                     />
                   </motion.div>
                 ))}
@@ -145,6 +156,8 @@ function TreeNode({ node, onFolderSelect, selectedPath, isExpanded, onToggle, on
 }
 
 export default function FolderTree({ tree, onFolderSelect, selectedPath, isLoading, isVisible, setIsVisible, style, isResizing, onContextMenu, expandedFolders, onToggleFolder, fileTree = false }) {
+  const [isHovered, setIsHovered] = useState(false);
+
   const handleEmptyAreaContextMenu = (e) => {
     if (e.target === e.currentTarget) {
       onContextMenu(e, null);
@@ -153,6 +166,8 @@ export default function FolderTree({ tree, onFolderSelect, selectedPath, isLoadi
   
   return (
     <div
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       className={clsx(
         'relative bg-bg-secondary rounded-lg flex-shrink-0',
         !isResizing && 'transition-[width] duration-300 ease-in-out'
@@ -184,6 +199,7 @@ export default function FolderTree({ tree, onFolderSelect, selectedPath, isLoadi
                 onToggle={onToggleFolder}
                 onContextMenu={onContextMenu}
                 expandedFolders={expandedFolders}
+                isTreeHovered={isHovered}
                 fileTree={fileTree}
               />
               {tree.children.length === 0 && (

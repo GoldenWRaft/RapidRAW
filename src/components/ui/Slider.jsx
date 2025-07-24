@@ -3,10 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 /**
- * A reusable slider component with a clickable reset icon and an interactive handle.
- * The slider's thumb animates with an "ease-in-out" effect when the value is set programmatically.
- * The numeric value can be clicked to manually input a precise value.
- * Double-clicking the label, value, or slider track will also reset the value.
+ * A reusable slider component...
  *
  * @param {string} label - The text label for the slider.
  * @param {number|string} value - The current value of the slider.
@@ -14,19 +11,29 @@ import React, { useState, useEffect, useRef } from 'react';
  * @param {number|string} min - The minimum value of the slider.
  * @param {number|string} max - The maximum value of the slider.
  * @param {number|string} step - The increment step of the slider.
- * @param {number} [defaultValue=0] - The value to reset to on icon click or double-click. Defaults to 0.
+ * @param {number} [defaultValue=0] - The value to reset to.
+ * @param {function} [onDragStateChange] - Optional callback to report dragging state to a parent.
  */
-const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0 }) => {
+const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0, onDragStateChange = () => {} }) => {
   const [displayValue, setDisplayValue] = useState(Number(value));
   const [isDragging, setIsDragging] = useState(false);
   const animationFrameRef = useRef();
   const [isEditing, setIsEditing] = useState(false);
   const [inputValue, setInputValue] = useState(String(value));
   const inputRef = useRef(null);
+  const [isHovered, setIsHovered] = useState(false);
+  const containerRef = useRef(null);
+  
+  useEffect(() => {
+    onDragStateChange(isDragging);
+  }, [isDragging, onDragStateChange]);
 
   useEffect(() => {
     const handleDragEndGlobal = () => {
       setIsDragging(false);
+      if (containerRef.current && !containerRef.current.matches(':hover')) {
+        setIsHovered(false);
+      }
     };
 
     if (isDragging) {
@@ -169,22 +176,33 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0 }) =>
   );
 
   return (
-    <div className="mb-2 group">
+    <div 
+      ref={containerRef}
+      className="mb-2"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => {
+        if (!isDragging) {
+          setIsHovered(false);
+        }
+      }}
+    >
       <div className="flex justify-between items-center mb-1">
         <div 
           className="flex items-center gap-2 cursor-pointer"
           onDoubleClick={handleReset}
-          title={`Double-click to reset ${label.toLowerCase()}`}
+          title={typeof label === 'string' && label ? `Double-click to reset ${label.toLowerCase()}` : 'Double-click to reset'}
         >
           <label className="text-sm font-medium text-text-secondary select-none">{label}</label>
-          <button
-            onClick={handleReset}
-            className="p-0.5 rounded hover:bg-card-active transition-all duration-200 cursor-pointer opacity-0 group-hover:opacity-100 active:scale-95"
-            title={`Reset to ${defaultValue}`}
-            type="button"
-          >
-            <ResetIcon />
-          </button>
+          {typeof label === 'string' && (
+            <button
+              onClick={handleReset}
+              className={`p-0.5 rounded hover:bg-card-active transition-all duration-200 cursor-pointer active:scale-95 ${isHovered && !isDragging ? 'opacity-100' : 'opacity-0'}`}
+              title={`Reset to ${defaultValue}`}
+              type="button"
+            >
+              <ResetIcon />
+            </button>
+          )}
         </div>
         <div className="w-12 text-right">
           {isEditing ? (
