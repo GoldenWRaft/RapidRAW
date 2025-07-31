@@ -1298,7 +1298,6 @@ function App() {
   };
 
   const handleAppliedLutImage = (imageUrl) => {
-    console.log("App jsx: LUT applied to image:", imageUrl);
     if (!selectedImage) return;
     setSelectedImage(prev => ({ ...prev, originalUrl: imageUrl }));
     setFinalPreviewUrl(imageUrl);

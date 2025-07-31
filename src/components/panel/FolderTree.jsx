@@ -7,6 +7,7 @@ function TreeNode({ node, onFolderSelect, selectedPath, isExpanded, onToggle, on
   const isFolder = node.is_dir;
   const hasChildren = node.children && node.children.length > 0;
   const isSelected = node.path === selectedPath;
+  const childFolders = node.children.some(child => child.is_dir);
 
   const handleFolderIconClick = (e) => {
     e.stopPropagation();
