@@ -288,7 +288,7 @@ export default function MasksPanel({
       </div>
       <div className="flex-grow overflow-y-auto p-4 text-text-secondary space-y-6" onClick={handleDeselect} onContextMenu={handlePanelContextMenu}>
         <div onClick={(e) => e.stopPropagation()}>
-          {aiModelDownloadStatus && <div className="p-2 text-center text-xs text-text-secondary bg-surface rounded-md mb-4">Downloading AI Model: {aiModelDownload-status}...</div>}
+          {aiModelDownloadStatus && <div className="p-2 text-center text-xs text-text-secondary bg-surface rounded-md mb-4">Downloading AI Model: {aiModelDownloadStatus}</div>}
           <p className="text-sm mb-3 font-semibold text-text-primary">Create New Mask</p>
           <div className="grid grid-cols-3 gap-2">
             {MASK_TYPES.map(maskType => (

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { platform } from '@tauri-apps/plugin-os';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Minus, Square, X } from 'lucide-react';
@@ -21,7 +21,18 @@ export default function TitleBar() {
 
   const appWindow = getCurrentWindow();
   const handleMinimize = () => appWindow.minimize();
-  const handleMaximize = () => appWindow.toggleMaximize();
+  const handleMaximize = useCallback(async () => {
+    switch (osPlatform) {
+      case 'macos': {
+        const isFullscreen = await appWindow.isFullscreen();
+        appWindow.setFullscreen(!isFullscreen);
+        break;
+      }
+      default:
+        appWindow.toggleMaximize();
+        break;
+    }
+  }, [osPlatform, appWindow]);
   const handleClose = () => appWindow.close();
 
   const isMac = osPlatform === 'macos';

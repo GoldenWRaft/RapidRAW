@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-  pull_request_target:
 
 jobs:
   build:
@@ -16,10 +15,14 @@ jobs:
             builds-args: '--bundles nsis'
             target: ''
             asset-prefix: '01'
-          - platform: 'macos-latest'
+          - platform: 'windows-11-arm'
+            builds-args: '--bundles nsis'
+            target: ''
+            asset-prefix: '01'
+          - platform: 'macos-13'
             target: aarch64-apple-darwin
             asset-prefix: '02'
-          - platform: 'macos-latest'
+          - platform: 'macos-13'
             target: x86_64-apple-darwin
             asset-prefix: '02'
           - platform: 'ubuntu-22.04'
@@ -34,7 +37,6 @@ jobs:
           - platform: 'ubuntu-24.04-arm'
             target: ''
             asset-prefix: '03'
-
     uses: ./.github/workflows/build.yml
     with:
       platform: ${{ matrix.platform }}

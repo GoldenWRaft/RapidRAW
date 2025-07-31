@@ -38,7 +38,7 @@ const ColorGradingPanel = ({ adjustments, setAdjustments }) => {
     return (
         <div>
             <div className="flex justify-center mb-4">
-                <div className="w-2/5 max-w-[120px]">
+                <div className="w-[calc(50%-0.5rem)]">
                     <ColorWheel
                         label="Midtones"
                         value={colorGrading.midtones}
