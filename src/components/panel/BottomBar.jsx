@@ -68,6 +68,7 @@ export default function BottomBar({
   isResizing,
 }) {
   const [sliderValue, setSliderValue] = useState(zoom);
+  const [isZoomLabelHovered, setIsZoomLabelHovered] = useState(false);
   const isDraggingSlider = useRef(false);
   const syncTimeoutRef = useRef(null);
 
@@ -103,6 +104,21 @@ export default function BottomBar({
     syncTimeoutRef.current = setTimeout(() => {
       setSliderValue(zoom);
     }, 300);
+  };
+
+  const handleZoomKeyDown = (e) => {
+    if ((e.ctrlKey || e.metaKey) && ['z', 'y'].includes(e.key.toLowerCase())) {
+      e.target.blur();
+      return;
+    }
+    const globalKeys = [' ', 'ArrowUp', 'ArrowDown', 'f'];
+    if (globalKeys.includes(e.key)) {
+      e.target.blur();
+    }
+  };
+
+  const handleResetZoom = () => {
+    onZoomChange(1);
   };
 
   return (
@@ -187,8 +203,18 @@ export default function BottomBar({
           </div>
         ) : (
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 w-48">
-              <span className="text-xs text-text-secondary">Zoom</span>
+            <div className="flex items-center gap-2 w-56">
+              <div
+                className="relative w-12 h-full flex items-center justify-end cursor-pointer"
+                onMouseEnter={() => setIsZoomLabelHovered(true)}
+                onMouseLeave={() => setIsZoomLabelHovered(false)}
+                onClick={handleResetZoom}
+                title="Reset Zoom to 100%"
+              >
+                <span className="absolute right-0 text-xs text-text-secondary select-none text-right w-max transition-colors hover:text-text-primary">
+                  {isZoomLabelHovered ? 'Reset Zoom' : 'Zoom'}
+                </span>
+              </div>
               <input
                 type="range"
                 min={minZoom}
@@ -198,7 +224,8 @@ export default function BottomBar({
                 onChange={handleSliderChange}
                 onMouseDown={handleMouseDown}
                 onMouseUp={handleMouseUp}
-                className="w-full h-1 bg-surface rounded-lg appearance-none cursor-pointer accent-accent"
+                onKeyDown={handleZoomKeyDown}
+                className="flex-1 h-1 bg-surface rounded-lg appearance-none cursor-pointer accent-accent"
               />
               <span className="text-xs text-text-secondary w-10 text-right">{(sliderValue * 100).toFixed(0)}%</span>
             </div>

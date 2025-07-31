@@ -37,6 +37,7 @@ export const INITIAL_MASK_CONTAINER = {
   name: 'New Mask',
   visible: true,
   invert: false,
+  opacity: 100,
   adjustments: INITIAL_MASK_ADJUSTMENTS,
   subMasks: [],
 };

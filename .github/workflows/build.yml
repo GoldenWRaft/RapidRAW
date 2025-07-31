@@ -24,6 +24,9 @@ on:
       upload-artifacts:
         required: false
         type: boolean
+      repository:
+        required: false
+        type: string
       ref:
         required: false
         type: string
@@ -38,6 +41,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          repository: ${{ inputs.repository }}
           ref: ${{ inputs.ref }}
           fetch-depth: 0
           filter: tree:0
@@ -68,8 +72,10 @@ jobs:
           echo "version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        if: startsWith(inputs.platform, 'macos')
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ''
+        if: startsWith(inputs.platform, 'macos') || startsWith(inputs.platform, 'windows')
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -125,13 +131,14 @@ jobs:
 
       - id: tauri-build
         name: Build with tauri-action
-        # FIXME set this back to a release major version, ex. v0
+        # FIXME set this back to a release major version, ex. v0 . This is a commit from the `dev` branch which includes PR
+        # https://github.com/tauri-apps/tauri-action/pull/1099 , adding the assetNamePattern feature.
         uses: tauri-apps/tauri-action@cf3eb9b18add8548a40584695215c80ab7274f31
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NO_STRIP: ${{ startsWith(inputs.platform, 'ubuntu') }}
         with:
-          args: ${{ inputs.build-args }} ${{ inputs.target != '' && '--target' || ''  }} ${{ inputs.target }}
+          args: --verbose ${{ inputs.build-args }} ${{ inputs.target != '' && '--target' || ''  }} ${{ inputs.target }}
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
           releaseId: ${{ inputs.release-id }}
           retryAttempts: 3

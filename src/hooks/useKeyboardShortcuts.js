@@ -11,8 +11,9 @@ export const useKeyboardShortcuts = ({
   canRedo,
   activeRightPanel,
   isFullScreen,
-  aiTool,
   activeMaskId,
+  activeAiSubMaskId,
+  activeAiPatchContainerId,
   customEscapeHandler,
   copiedFilePaths,
   handleImageSelect,
@@ -32,8 +33,9 @@ export const useKeyboardShortcuts = ({
   handleRightPanelSelect,
   setIsWaveformVisible,
   handleZoomChange,
-  setAiTool,
   setActiveMaskId,
+  setActiveAiSubMaskId,
+  onSelectPatchContainer,
 }) => {
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -47,8 +49,10 @@ export const useKeyboardShortcuts = ({
           event.preventDefault();
           if (customEscapeHandler) {
             customEscapeHandler();
-          } else if (aiTool) {
-            setAiTool(null);
+          } else if (activeAiSubMaskId) {
+            setActiveAiSubMaskId(null);
+          } else if (activeAiPatchContainerId) {
+            onSelectPatchContainer(null);
           } else if (activeMaskId) {
             setActiveMaskId(null);
           } else if (isFullScreen) {
@@ -71,6 +75,7 @@ export const useKeyboardShortcuts = ({
         if (key === 'b' && !isCtrl) { event.preventDefault(); setShowOriginal(prev => !prev); }
         if (key === 'r' && !isCtrl) { event.preventDefault(); handleRightPanelSelect('crop'); }
         if (key === 'm' && !isCtrl) { event.preventDefault(); handleRightPanelSelect('masks'); }
+        if (key === 'k' && !isCtrl) { event.preventDefault(); handleRightPanelSelect('ai'); }
         if (key === 'i' && !isCtrl) { event.preventDefault(); handleRightPanelSelect('metadata'); }
         if (key === 'e' && !isCtrl) { event.preventDefault(); handleRightPanelSelect('export'); }
         if (key === 'w' && !isCtrl) { event.preventDefault(); setIsWaveformVisible(prev => !prev); }
@@ -131,5 +136,5 @@ export const useKeyboardShortcuts = ({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [ sortedImageList, selectedImage, undo, redo, isFullScreen, handleToggleFullScreen, handleBackToLibrary, handleRightPanelSelect, handleRate, handleDeleteSelected, handleCopyAdjustments, handlePasteAdjustments, multiSelectedPaths, copiedFilePaths, handlePasteFiles, libraryActivePath, handleImageSelect, zoom, handleZoomChange, customEscapeHandler, activeMaskId, aiTool, isViewLoading, activeRightPanel, canRedo, canUndo, setAiTool, setActiveMaskId, setCopiedFilePaths, setIsWaveformVisible, setLibraryActivePath, setMultiSelectedPaths, setShowOriginal ]);
+  }, [ sortedImageList, selectedImage, undo, redo, isFullScreen, handleToggleFullScreen, handleBackToLibrary, handleRightPanelSelect, handleRate, handleDeleteSelected, handleCopyAdjustments, handlePasteAdjustments, multiSelectedPaths, copiedFilePaths, handlePasteFiles, libraryActivePath, handleImageSelect, zoom, handleZoomChange, customEscapeHandler, activeMaskId, activeAiSubMaskId, activeAiPatchContainerId, isViewLoading, activeRightPanel, canRedo, canUndo, setActiveMaskId, setActiveAiSubMaskId, onSelectPatchContainer, setCopiedFilePaths, setIsWaveformVisible, setLibraryActivePath, setMultiSelectedPaths, setShowOriginal ]);
 };

@@ -17,6 +17,8 @@ pub struct ImageMetadata {
     pub version: u32,
     pub rating: u8,
     pub adjustments: Value,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
 }
 
 impl Default for ImageMetadata {
@@ -25,6 +27,7 @@ impl Default for ImageMetadata {
             version: 1,
             rating: 0,
             adjustments: Value::Null,
+            tags: None,
         }
     }
 }
@@ -252,7 +255,7 @@ pub struct AllAdjustments {
     pub mask_count: u32,
     pub tile_offset_x: u32,
     pub tile_offset_y: u32,
-    _pad1: u32,
+    pub mask_atlas_cols: u32,
 }
 
 struct AdjustmentScales {
@@ -299,10 +302,10 @@ const SCALES: AdjustmentScales = AdjustmentScales {
     shadows: 200.0,
     whites: 30.0,
     blacks: 60.0,
-    saturation: 80.0,
+    saturation: 100.0,
     temperature: 25.0,
     tint: 100.0,
-    vibrance: 80.0,
+    vibrance: 100.0,
     
     sharpness: 40.0,
     luma_noise_reduction: 100.0,
@@ -561,7 +564,7 @@ pub fn get_all_adjustments_from_json(js_adjustments: &serde_json::Value) -> AllA
         mask_count,
         tile_offset_x: 0,
         tile_offset_y: 0,
-        _pad1: 0,
+        mask_atlas_cols: 1,
     }
 }
 

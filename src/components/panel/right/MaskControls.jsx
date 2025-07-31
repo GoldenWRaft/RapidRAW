@@ -272,6 +272,15 @@ export default function MaskControls({
         <CollapsibleSection title="Mask Properties" isOpen={isSettingsSectionOpen} onToggle={() => setSettingsSectionOpen(prev => !prev)} isContentVisible={true} canToggleVisibility={false}>
           <div className="space-y-4">
             <Switch label="Invert Mask" checked={!!editingMask.invert} onChange={(checked) => handleMaskPropertyChange('invert', checked)} />
+            <Slider
+              label="Mask Transparency"
+              value={editingMask.opacity ?? 100}
+              onChange={(e) => handleMaskPropertyChange('opacity', Number(e.target.value))}
+              min="0"
+              max="100"
+              step="1"
+              defaultValue="100"
+            />
             {activeSubMask && (
               <>
                 {isAiMask && (

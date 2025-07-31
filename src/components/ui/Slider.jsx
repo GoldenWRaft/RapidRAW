@@ -151,6 +151,19 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0, onDr
     }
   };
 
+  const handleRangeKeyDown = (e) => {
+    if ((e.ctrlKey || e.metaKey) && ['z', 'y'].includes(e.key.toLowerCase())) {
+      e.target.blur();
+      return;
+    }
+
+    const globalKeys = [' ', 'ArrowUp', 'ArrowDown', 'f'];
+
+    if (globalKeys.includes(e.key)) {
+      e.target.blur();
+    }
+  };
+
   const stepStr = String(step);
   const decimalPlaces = stepStr.includes('.') ? stepStr.split('.')[1].length : 0;
   
@@ -242,6 +255,7 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0, onDr
         onTouchStart={handleDragStart}
         onTouchEnd={handleDragEnd}
         onDoubleClick={handleReset}
+        onKeyDown={handleRangeKeyDown}
         className={`w-full h-1.5 bg-card-active rounded-full appearance-none cursor-pointer slider-input ${isDragging ? 'slider-thumb-active' : ''}`}
       />
     </div>
