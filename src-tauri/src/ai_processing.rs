@@ -378,6 +378,8 @@ pub struct AiSubjectMaskParameters {
     pub flip_horizontal: Option<bool>,
     #[serde(default)]
     pub flip_vertical: Option<bool>,
+    #[serde(default)]
+    pub orientation_steps: Option<u8>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -391,4 +393,6 @@ pub struct AiForegroundMaskParameters {
     pub flip_horizontal: Option<bool>,
     #[serde(default)]
     pub flip_vertical: Option<bool>,
+    #[serde(default)]
+    pub orientation_steps: Option<u8>,
 }

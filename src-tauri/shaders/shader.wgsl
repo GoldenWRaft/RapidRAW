@@ -126,6 +126,22 @@ struct AllAdjustments {
     mask_atlas_cols: u32,
 }
 
+struct HslRange {
+    center: f32,
+    width: f32,
+}
+
+const HSL_RANGES: array<HslRange, 8> = array<HslRange, 8>(
+    HslRange(0.0, 60.0),    // Red:     -30 to 30
+    HslRange(30.0, 60.0),   // Orange:    0 to 60
+    HslRange(60.0, 60.0),   // Yellow:   30 to 90
+    HslRange(120.0, 90.0),  // Green:    75 to 165
+    HslRange(180.0, 60.0),  // Aqua:    150 to 210
+    HslRange(240.0, 90.0),  // Blue:    195 to 285
+    HslRange(300.0, 60.0),  // Purple:  270 to 330
+    HslRange(330.0, 60.0)   // Magenta: 300 to 360 (wraps to 0)
+);
+
 @group(0) @binding(0) var input_texture: texture_2d<f32>;
 @group(0) @binding(1) var output_texture: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(2) var<uniform> adjustments: AllAdjustments;
@@ -201,11 +217,19 @@ fn hsv_to_rgb(c: vec3<f32>) -> vec3<f32> {
 }
 
 fn get_hsl_influence(hue: f32, center_hue: f32, range_width: f32) -> f32 {
+    let radius = range_width * 0.5;
+    if (radius <= 0.0) {
+        return 0.0;
+    }
     let diff1 = abs(hue - center_hue);
     let diff2 = 360.0 - diff1;
     let distance = min(diff1, diff2);
-    let normalized_distance = distance / (range_width * 0.5);
-    return 1.0 - smoothstep(0.0, 1.0, normalized_distance);
+    if (distance >= radius) {
+        return 0.0;
+    }
+    let normalized_distance = distance / radius;
+    let PI = 3.14159265359;
+    return 0.5 * (cos(normalized_distance * PI) + 1.0);
 }
 
 fn hash(p: vec2<f32>) -> f32 {
@@ -378,41 +402,64 @@ fn apply_creative_color(color: vec3<f32>, sat: f32, vib: f32) -> vec3<f32> {
 }
 
 fn apply_hsl_panel(color: vec3<f32>, hsl_adjustments: array<HslColor, 8>, coords_i: vec2<i32>) -> vec3<f32> {
-    var hsv = rgb_to_hsv(color);
-    if (hsv.y < 0.01) { return color; }
-    let saturation_mask = smoothstep(0.20, 0.45, hsv.y);
-    if (saturation_mask < 0.001) { return color; }
-    var total_hue_shift: f32 = 0.0;
-    var total_sat_adjust: f32 = 0.0;
-    var total_lum_adjust: f32 = 0.0;
-    var total_influence: f32 = 0.0;
-    var influence = get_hsl_influence(hsv.x, 0.0, 80.0) * saturation_mask;
-    if (influence > 0.001) { total_hue_shift += hsl_adjustments[0].hue * influence; total_sat_adjust += hsl_adjustments[0].saturation * influence; total_lum_adjust += hsl_adjustments[0].luminance * influence; total_influence += influence; }
-    influence = get_hsl_influence(hsv.x, 30.0, 70.0) * saturation_mask;
-    if (influence > 0.001) { total_hue_shift += hsl_adjustments[1].hue * influence; total_sat_adjust += hsl_adjustments[1].saturation * influence; total_lum_adjust += hsl_adjustments[1].luminance * influence; total_influence += influence; }
-    influence = get_hsl_influence(hsv.x, 60.0, 70.0) * saturation_mask;
-    if (influence > 0.001) { total_hue_shift += hsl_adjustments[2].hue * influence; total_sat_adjust += hsl_adjustments[2].saturation * influence; total_lum_adjust += hsl_adjustments[2].luminance * influence; total_influence += influence; }
-    influence = get_hsl_influence(hsv.x, 120.0, 100.0) * saturation_mask;
-    if (influence > 0.001) { total_hue_shift += hsl_adjustments[3].hue * influence; total_sat_adjust += hsl_adjustments[3].saturation * influence; total_lum_adjust += hsl_adjustments[3].luminance * influence; total_influence += influence; }
-    influence = get_hsl_influence(hsv.x, 180.0, 80.0) * saturation_mask;
-    if (influence > 0.001) { total_hue_shift += hsl_adjustments[4].hue * influence; total_sat_adjust += hsl_adjustments[4].saturation * influence; total_lum_adjust += hsl_adjustments[4].luminance * influence; total_influence += influence; }
-    influence = get_hsl_influence(hsv.x, 240.0, 90.0) * saturation_mask;
-    if (influence > 0.001) { total_hue_shift += hsl_adjustments[5].hue * influence; total_sat_adjust += hsl_adjustments[5].saturation * influence; total_lum_adjust += hsl_adjustments[5].luminance * influence; total_influence += influence; }
-    influence = get_hsl_influence(hsv.x, 285.0, 80.0) * saturation_mask;
-    if (influence > 0.001) { total_hue_shift += hsl_adjustments[6].hue * influence; total_sat_adjust += hsl_adjustments[6].saturation * influence; total_lum_adjust += hsl_adjustments[6].luminance * influence; total_influence += influence; }
-    influence = get_hsl_influence(hsv.x, 330.0, 80.0) * saturation_mask;
-    if (influence > 0.001) { total_hue_shift += hsl_adjustments[7].hue * influence; total_sat_adjust += hsl_adjustments[7].saturation * influence; total_lum_adjust += hsl_adjustments[7].luminance * influence; total_influence += influence; }
-    if (total_influence > 0.001) {
-        let norm_factor = 1.0 / total_influence;
-        hsv.x = (hsv.x + total_hue_shift * norm_factor + 360.0) % 360.0;
-        hsv.y = clamp(hsv.y * (1.0 + total_sat_adjust * norm_factor), 0.0, 1.0);
-        let lum_adjust_is_active = abs(total_lum_adjust) > 0.001;
-        if (lum_adjust_is_active) {
-            let luminance_saturation_mask = smoothstep(0.3, 0.8, hsv.y);
-            let final_lum_adjust = total_lum_adjust * norm_factor * luminance_saturation_mask;
-            hsv.z = clamp(hsv.z * (1.0 + final_lum_adjust), 0.0, 1.5);
-        }
+    if (distance(color.r, color.g) < 0.001 && distance(color.g, color.b) < 0.001) {
+        return color;
     }
+    let original_hsv = rgb_to_hsv(color);
+    let original_luma = get_luma(color);
+    let saturation_mask = smoothstep(0.15, 0.40, original_hsv.y);
+    if (saturation_mask < 0.001) {
+        return color;
+    }
+    var hsv = original_hsv;
+    var total_lum_adjust: f32 = 0.0;
+
+    var influence = get_hsl_influence(hsv.x, HSL_RANGES[0].center, HSL_RANGES[0].width) * saturation_mask;
+    hsv.x = (hsv.x + hsl_adjustments[0].hue * influence + 360.0) % 360.0;
+    hsv.y = clamp(hsv.y * (1.0 + hsl_adjustments[0].saturation * influence), 0.0, 1.0);
+    total_lum_adjust += hsl_adjustments[0].luminance * influence;
+
+    influence = get_hsl_influence(hsv.x, HSL_RANGES[1].center, HSL_RANGES[1].width) * saturation_mask;
+    hsv.x = (hsv.x + hsl_adjustments[1].hue * influence + 360.0) % 360.0;
+    hsv.y = clamp(hsv.y * (1.0 + hsl_adjustments[1].saturation * influence), 0.0, 1.0);
+    total_lum_adjust += hsl_adjustments[1].luminance * influence;
+
+    influence = get_hsl_influence(hsv.x, HSL_RANGES[2].center, HSL_RANGES[2].width) * saturation_mask;
+    hsv.x = (hsv.x + hsl_adjustments[2].hue * influence + 360.0) % 360.0;
+    hsv.y = clamp(hsv.y * (1.0 + hsl_adjustments[2].saturation * influence), 0.0, 1.0);
+    total_lum_adjust += hsl_adjustments[2].luminance * influence;
+
+    influence = get_hsl_influence(hsv.x, HSL_RANGES[3].center, HSL_RANGES[3].width) * saturation_mask;
+    hsv.x = (hsv.x + hsl_adjustments[3].hue * influence + 360.0) % 360.0;
+    hsv.y = clamp(hsv.y * (1.0 + hsl_adjustments[3].saturation * influence), 0.0, 1.0);
+    total_lum_adjust += hsl_adjustments[3].luminance * influence;
+
+    influence = get_hsl_influence(hsv.x, HSL_RANGES[4].center, HSL_RANGES[4].width) * saturation_mask;
+    hsv.x = (hsv.x + hsl_adjustments[4].hue * influence + 360.0) % 360.0;
+    hsv.y = clamp(hsv.y * (1.0 + hsl_adjustments[4].saturation * influence), 0.0, 1.0);
+    total_lum_adjust += hsl_adjustments[4].luminance * influence;
+
+    influence = get_hsl_influence(hsv.x, HSL_RANGES[5].center, HSL_RANGES[5].width) * saturation_mask;
+    hsv.x = (hsv.x + hsl_adjustments[5].hue * influence + 360.0) % 360.0;
+    hsv.y = clamp(hsv.y * (1.0 + hsl_adjustments[5].saturation * influence), 0.0, 1.0);
+    total_lum_adjust += hsl_adjustments[5].luminance * influence;
+
+    influence = get_hsl_influence(hsv.x, HSL_RANGES[6].center, HSL_RANGES[6].width) * saturation_mask;
+    hsv.x = (hsv.x + hsl_adjustments[6].hue * influence + 360.0) % 360.0;
+    hsv.y = clamp(hsv.y * (1.0 + hsl_adjustments[6].saturation * influence), 0.0, 1.0);
+    total_lum_adjust += hsl_adjustments[6].luminance * influence;
+
+    influence = get_hsl_influence(hsv.x, HSL_RANGES[7].center, HSL_RANGES[7].width) * saturation_mask;
+    hsv.x = (hsv.x + hsl_adjustments[7].hue * influence + 360.0) % 360.0;
+    hsv.y = clamp(hsv.y * (1.0 + hsl_adjustments[7].saturation * influence), 0.0, 1.0);
+    total_lum_adjust += hsl_adjustments[7].luminance * influence;
+
+    let hs_shifted_color_temp = hsv_to_rgb(hsv);
+    let new_luma = get_luma(hs_shifted_color_temp);
+    if (new_luma > 0.001) {
+        hsv.z *= (original_luma / new_luma);
+    }
+    hsv.z = clamp(hsv.z * (1.0 + total_lum_adjust), 0.0, 1.5);
     return hsv_to_rgb(hsv);
 }
 
@@ -444,37 +491,61 @@ fn apply_color_grading(color: vec3<f32>, shadows: ColorGradeSettings, midtones: 
     return graded_color;
 }
 
-fn apply_local_contrast(processed_color: vec3<f32>, coords_i: vec2<i32>, radius: i32, amount: f32) -> vec3<f32> {
-    if (amount == 0.0) { return processed_color; }
-    let max_coords = vec2<i32>(textureDimensions(input_texture) - 1u);
-    let original_luma = get_luma(processed_color);
-    var blurred_linear = vec3<f32>(0.0);
+fn apply_local_contrast(
+    processed_color_linear: vec3<f32>, 
+    coords_i: vec2<i32>, 
+    radius: i32, 
+    amount: f32
+) -> vec3<f32> {
+    if (amount == 0.0) { 
+        return processed_color_linear; 
+    }
+    let center_luma = get_luma(processed_color_linear);
+    let shadow_protection = smoothstep(0.0, 0.25, center_luma);
+    let highlight_protection = 1.0 - smoothstep(0.75, 1.0, center_luma);
+    let midtone_mask = shadow_protection * highlight_protection;
+    if (midtone_mask < 0.001) {
+        return processed_color_linear;
+    }
+    var blurred_luma = 0.0;
     var total_weight = 0.0;
+    let max_coords = vec2<i32>(textureDimensions(input_texture) - 1u);
     let spatial_sigma = f32(radius);
-    let range_sigma = 0.25;
+    let range_sigma = 0.2;
     for (var y = -radius; y <= radius; y += 1) {
         for (var x = -radius; x <= radius; x += 1) {
             let offset = vec2<i32>(x, y);
             let sample_coords = clamp(coords_i + offset, vec2<i32>(0), max_coords);
+            
             let sample_linear = srgb_to_linear(textureLoad(input_texture, sample_coords, 0).rgb);
             let sample_luma = get_luma(sample_linear);
+
             let spatial_dist_sq = f32(x * x + y * y);
-            let luma_dist = sample_luma - original_luma;
+            let luma_dist_sq = (sample_luma - center_luma) * (sample_luma - center_luma);
+
             let spatial_weight = exp(-spatial_dist_sq / (2.0 * spatial_sigma * spatial_sigma));
-            let range_weight = exp(-(luma_dist * luma_dist) / (2.0 * range_sigma * range_sigma));
+            let range_weight = exp(-luma_dist_sq / (2.0 * range_sigma * range_sigma));
             let weight = spatial_weight * range_weight;
-            blurred_linear += sample_linear * weight;
+
+            blurred_luma += sample_luma * weight;
             total_weight += weight;
         }
     }
-    if (total_weight > 0.0) { blurred_linear /= total_weight; } else { blurred_linear = processed_color; }
-    let detail_linear = processed_color - blurred_linear;
-    let shadow_protection = smoothstep(0.0, 0.25, original_luma);
-    let highlight_protection = 1.0 - smoothstep(0.75, 1.0, original_luma);
-    let midtone_mask = shadow_protection * highlight_protection;
-    let scaled_amount = amount * 0.8;
-    let enhanced_detail = detail_linear * scaled_amount * midtone_mask;
-    return processed_color + enhanced_detail;
+    if (total_weight > 0.0) {
+        blurred_luma /= total_weight;
+    } else {
+        return processed_color_linear;
+    }
+    let safe_center_luma = max(center_luma, 0.0001);
+    let blurred_color = processed_color_linear * (blurred_luma / safe_center_luma);
+    var final_color: vec3<f32>;
+    if (amount < 0.0) {
+        final_color = mix(processed_color_linear, blurred_color, -amount);
+    } else {
+        let detail_vector = processed_color_linear - blurred_color;
+        final_color = processed_color_linear + detail_vector * amount * 1.5;
+    }
+    return mix(processed_color_linear, final_color, midtone_mask);
 }
 
 fn apply_dehaze(color: vec3<f32>, amount: f32) -> vec3<f32> {
@@ -542,31 +613,39 @@ fn apply_all_curves(color: vec3<f32>, luma_curve: array<Point, 16>, luma_curve_c
 
 fn apply_all_adjustments(initial_rgb: vec3<f32>, adj: GlobalAdjustments, coords_i: vec2<i32>) -> vec3<f32> {
     var processed_rgb = apply_noise_reduction(initial_rgb, coords_i, adj.luma_noise_reduction, adj.color_noise_reduction);
+
     processed_rgb = apply_white_balance(processed_rgb, adj.temperature, adj.tint);
     processed_rgb = processed_rgb * pow(2.0, adj.exposure);
     processed_rgb = apply_tonal_adjustments(processed_rgb, adj.contrast, adj.highlights, adj.shadows, adj.whites, adj.blacks);
-    processed_rgb = apply_hsl_panel(processed_rgb, adj.hsl, coords_i);
-    processed_rgb = apply_color_grading(processed_rgb, adj.color_grading_shadows, adj.color_grading_midtones, adj.color_grading_highlights, adj.color_grading_blending, adj.color_grading_balance);
-    processed_rgb = apply_creative_color(processed_rgb, adj.saturation, adj.vibrance);
+
     processed_rgb = apply_dehaze(processed_rgb, adj.dehaze);
     processed_rgb = apply_local_contrast(processed_rgb, coords_i, 2, adj.sharpness);
     processed_rgb = apply_local_contrast(processed_rgb, coords_i, 8, adj.clarity);
     processed_rgb = apply_local_contrast(processed_rgb, coords_i, 20, adj.structure);
+
+    processed_rgb = apply_hsl_panel(processed_rgb, adj.hsl, coords_i);
+    processed_rgb = apply_color_grading(processed_rgb, adj.color_grading_shadows, adj.color_grading_midtones, adj.color_grading_highlights, adj.color_grading_blending, adj.color_grading_balance);
+    processed_rgb = apply_creative_color(processed_rgb, adj.saturation, adj.vibrance);
+
     return processed_rgb;
 }
 
 fn apply_all_mask_adjustments(initial_rgb: vec3<f32>, adj: MaskAdjustments, coords_i: vec2<i32>) -> vec3<f32> {
     var processed_rgb = apply_noise_reduction(initial_rgb, coords_i, adj.luma_noise_reduction, adj.color_noise_reduction);
+
     processed_rgb = apply_white_balance(processed_rgb, adj.temperature, adj.tint);
     processed_rgb = processed_rgb * pow(2.0, adj.exposure);
     processed_rgb = apply_tonal_adjustments(processed_rgb, adj.contrast, adj.highlights, adj.shadows, adj.whites, adj.blacks);
-    processed_rgb = apply_hsl_panel(processed_rgb, adj.hsl, coords_i);
-    processed_rgb = apply_color_grading(processed_rgb, adj.color_grading_shadows, adj.color_grading_midtones, adj.color_grading_highlights, adj.color_grading_blending, adj.color_grading_balance);
-    processed_rgb = apply_creative_color(processed_rgb, adj.saturation, adj.vibrance);
+
     processed_rgb = apply_dehaze(processed_rgb, adj.dehaze);
     processed_rgb = apply_local_contrast(processed_rgb, coords_i, 2, adj.sharpness);
     processed_rgb = apply_local_contrast(processed_rgb, coords_i, 8, adj.clarity);
     processed_rgb = apply_local_contrast(processed_rgb, coords_i, 20, adj.structure);
+
+    processed_rgb = apply_hsl_panel(processed_rgb, adj.hsl, coords_i);
+    processed_rgb = apply_color_grading(processed_rgb, adj.color_grading_shadows, adj.color_grading_midtones, adj.color_grading_highlights, adj.color_grading_blending, adj.color_grading_balance);
+    processed_rgb = apply_creative_color(processed_rgb, adj.saturation, adj.vibrance);
+    
     return processed_rgb;
 }
 

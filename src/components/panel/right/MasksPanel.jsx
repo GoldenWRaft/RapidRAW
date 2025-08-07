@@ -8,6 +8,7 @@ import {
 import MaskControls from './MaskControls';
 import { INITIAL_MASK_ADJUSTMENTS, INITIAL_MASK_CONTAINER } from '../../../utils/adjustments';
 import { useContextMenu } from '../../../context/ContextMenuContext';
+import { createSubMask } from '../../../utils/maskUtils';
 
 const MASK_TYPES = [
   { id: 'ai-subject', name: 'Subject', icon: Sparkles, type: 'ai-subject', disabled: false },
@@ -73,21 +74,8 @@ export default function MasksPanel({
 
   useEffect(() => { isInitialRender.current = false; }, []);
 
-  const createSubMask = (type) => {
-    const { width, height } = selectedImage;
-    const common = { id: uuidv4(), visible: true, mode: 'additive', type };
-    switch (type) {
-      case 'radial': return { ...common, parameters: { centerX: width / 2, centerY: height / 2, radiusX: width / 4, radiusY: width / 4, rotation: 0, feather: 0.5 } };
-      case 'linear': return { ...common, parameters: { startX: width * 0.25, startY: height / 2, endX: width * 0.75, endY: height / 2, range: 50 } };
-      case 'brush': return { ...common, parameters: { lines: [] } };
-      case 'ai-subject': return { ...common, parameters: { startX: 0, startY: 0, endX: 0, endY: 0, maskDataBase64: null } };
-      case 'ai-foreground': return { ...common, parameters: { maskDataBase64: null } };
-      default: return { ...common, parameters: {} };
-    }
-  };
-
   const handleAddMaskContainer = (type) => {
-    const subMask = createSubMask(type);
+    const subMask = createSubMask(type, selectedImage); 
     const newContainer = {
       ...INITIAL_MASK_CONTAINER,
       id: uuidv4(),

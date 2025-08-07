@@ -33,10 +33,10 @@ const MaskOverlay = memo(({ subMask, scale, onUpdate, isSelected, onSelect, onMa
 
   const handleRadialDrag = useCallback((e) => {
     onUpdate(subMask.id, {
-      parameters: { 
-        ...subMask.parameters, 
-        centerX: (e.target.x() / scale) + cropX, 
-        centerY: (e.target.y() / scale) + cropY 
+      parameters: {
+        ...subMask.parameters,
+        centerX: (e.target.x() / scale) + cropX,
+        centerY: (e.target.y() / scale) + cropY
       },
     });
   }, [subMask.id, subMask.parameters, onUpdate, scale, cropX, cropY]);
@@ -60,7 +60,7 @@ const MaskOverlay = memo(({ subMask, scale, onUpdate, isSelected, onSelect, onMa
   const handleRadialTransformEnd = useCallback(() => {
     const node = shapeRef.current;
     if (!node) return;
-    
+
     const scaleX = node.scaleX();
     const scaleY = node.scaleY();
 
@@ -119,7 +119,7 @@ const MaskOverlay = memo(({ subMask, scale, onUpdate, isSelected, onSelect, onMa
     }
     onUpdate(subMask.id, { parameters: newParams });
   };
-  
+
   const handleRangeDrag = (e) => {
     const newRange = Math.abs(e.target.y() / scale);
     onUpdate(subMask.id, {
@@ -323,7 +323,7 @@ const ImageCanvas = memo(({
   uncroppedAdjustedPreviewUrl, maskOverlayUrl,
   onSelectMask, activeMaskId, activeMaskContainerId,
   updateSubMask, setIsMaskHovered, isMaskControlHovered,
-  brushSettings, onGenerateAiMask,
+  brushSettings, onGenerateAiMask, isStraightenActive, onStraighten,
   isAiEditing, activeAiPatchContainerId, activeAiSubMaskId, onSelectAiSubMask
 }) => {
   const [isCropViewVisible, setIsCropViewVisible] = useState(false);
@@ -336,6 +336,8 @@ const ImageCanvas = memo(({
   const isDrawing = useRef(false);
   const currentLine = useRef(null);
   const [previewLine, setPreviewLine] = useState(null);
+  const [straightenLine, setStraightenLine] = useState(null);
+  const isStraightening = useRef(false);
   const [cursorPreview, setCursorPreview] = useState({ x: 0, y: 0, visible: false });
 
   const activeContainer = useMemo(() => {
@@ -347,7 +349,7 @@ const ImageCanvas = memo(({
     }
     return null;
   }, [adjustments.masks, adjustments.aiPatches, activeMaskContainerId, activeAiPatchContainerId, isMasking, isAiEditing]);
-  
+
   const activeSubMask = useMemo(() => {
     if (!activeContainer) return null;
     if (isMasking) {
@@ -499,7 +501,7 @@ const ImageCanvas = memo(({
     }
 
     if (!isDrawing.current || !toolActive) return;
-    
+
     const stage = e.target.getStage();
     const pos = stage.getPointerPosition();
     if (!pos) return;
@@ -514,7 +516,7 @@ const ImageCanvas = memo(({
 
   const handleMouseUp = useCallback(() => {
     if (!isDrawing.current || !currentLine.current) return;
-    
+
     const wasDrawing = isDrawing.current;
     isDrawing.current = false;
     const line = currentLine.current;
@@ -541,7 +543,7 @@ const ImageCanvas = memo(({
 
         const startPoint = { x: minX / scale + cropX, y: minY / scale + cropY };
         const endPoint = { x: maxX / scale + cropX, y: maxY / scale + cropY };
-        
+
         if (onGenerateAiMask) {
             onGenerateAiMask(activeId, startPoint, endPoint);
         }
@@ -592,6 +594,71 @@ const ImageCanvas = memo(({
     }
   }, [handleMouseUp]);
 
+  const handleStraightenMouseDown = (e) => {
+    if (e.evt.button !== 0) return;
+    isStraightening.current = true;
+    const pos = e.target.getStage().getPointerPosition();
+    setStraightenLine({ start: pos, end: pos });
+  };
+
+  const handleStraightenMouseMove = (e) => {
+    if (!isStraightening.current) return;
+    const pos = e.target.getStage().getPointerPosition();
+    setStraightenLine(prev => ({ ...prev, end: pos }));
+  };
+
+  const handleStraightenMouseUp = () => {
+    if (!isStraightening.current) return;
+    isStraightening.current = false;
+
+    if (!straightenLine || (straightenLine.start.x === straightenLine.end.x && straightenLine.start.y === straightenLine.start.y)) {
+      setStraightenLine(null);
+      return;
+    }
+
+    const { start, end } = straightenLine;
+
+    const { rotation = 0 } = adjustments;
+    const theta_rad = rotation * Math.PI / 180;
+    const cos_t = Math.cos(theta_rad);
+    const sin_t = Math.sin(theta_rad);
+
+    const { width, height } = uncroppedImageRenderSize;
+    const cx = width / 2;
+    const cy = height / 2;
+
+    const unrotate = (p) => {
+      const x = p.x - cx;
+      const y = p.y - cy;
+      return {
+        x: cx + x * cos_t + y * sin_t,
+        y: cy - x * sin_t + y * cos_t,
+      };
+    };
+
+    const start_unrotated = unrotate(start);
+    const end_unrotated = unrotate(end);
+
+    const dx = end_unrotated.x - start_unrotated.x;
+    const dy = end_unrotated.y - start_unrotated.y;
+    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+    let targetAngle;
+    if (angle > -45 && angle <= 45) targetAngle = 0;
+    else if (angle > 45 && angle <= 135) targetAngle = 90;
+    else if (angle > 135 || angle <= -135) targetAngle = 180;
+    else targetAngle = -90;
+
+    let correction = targetAngle - angle;
+    if (correction > 180) correction -= 360;
+    if (correction < -180) correction += 360;
+
+    onStraighten(correction);
+    setStraightenLine(null);
+  };
+
+  const handleStraightenMouseLeave = () => { if (isStraightening.current) { isStraightening.current = false; setStraightenLine(null); } };
+
   const cropPreviewUrl = uncroppedAdjustedPreviewUrl || selectedImage.originalUrl;
   const isContentReady = layers.length > 0 || selectedImage.thumbnailUrl;
 
@@ -605,8 +672,8 @@ const ImageCanvas = memo(({
 
     let uncroppedEffectiveWidth = selectedImage.width;
     let uncroppedEffectiveHeight = selectedImage.height;
-    const rotation = adjustments.rotation || 0;
-    if (rotation === 90 || rotation === 270) {
+    const orientationSteps = adjustments.orientationSteps || 0;
+    if (orientationSteps === 1 || orientationSteps === 3) {
         [uncroppedEffectiveWidth, uncroppedEffectiveHeight] = [uncroppedEffectiveHeight, uncroppedEffectiveWidth];
     }
 
@@ -619,11 +686,11 @@ const ImageCanvas = memo(({
         viewportHeight / uncroppedEffectiveHeight
     );
 
-    const renderWidth = selectedImage.width * scale;
-    const renderHeight = selectedImage.height * scale;
+    const renderWidth = uncroppedEffectiveWidth * scale;
+    const renderHeight = uncroppedEffectiveHeight * scale;
 
     return { width: renderWidth, height: renderHeight };
-  }, [selectedImage?.width, selectedImage?.height, imageRenderSize, adjustments.rotation]);
+  }, [selectedImage?.width, selectedImage?.height, imageRenderSize, adjustments.orientationSteps]);
 
   const cropImageTransforms = useMemo(() => {
     const transforms = [`rotate(${adjustments.rotation || 0}deg)`];
@@ -646,7 +713,7 @@ const ImageCanvas = memo(({
             "transition-opacity duration-300",
             isAdjusting && !showOriginal ? 'opacity-70' : 'opacity-100'
           )}
-          style={{ 
+          style={{
             opacity: isContentReady ? 1 : 0,
             width: '100%',
             height: '100%',
@@ -762,26 +829,43 @@ const ImageCanvas = memo(({
         }}
       >
         {cropPreviewUrl && uncroppedImageRenderSize && (
-          <ReactCrop
-            crop={crop}
-            onChange={setCrop}
-            onComplete={handleCropComplete}
-            aspect={adjustments.aspectRatio}
-            ruleOfThirds
-          >
-            <img
-              ref={cropImageRef}
-              alt="Crop preview"
-              src={cropPreviewUrl}
-              style={{ 
-                display: 'block', 
-                width: `${uncroppedImageRenderSize.width}px`,
-                height: `${uncroppedImageRenderSize.height}px`,
-                objectFit: 'contain',
-                transform: cropImageTransforms,
-              }}
-            />
-          </ReactCrop>
+          <div style={{ position: 'relative', width: uncroppedImageRenderSize.width, height: uncroppedImageRenderSize.height }}>
+            <ReactCrop
+              crop={crop}
+              onChange={setCrop}
+              onComplete={handleCropComplete}
+              aspect={adjustments.aspectRatio}
+              ruleOfThirds={!isStraightenActive}
+            >
+              <img
+                ref={cropImageRef}
+                alt="Crop preview"
+                src={cropPreviewUrl}
+                style={{
+                  display: 'block',
+                  width: `${uncroppedImageRenderSize.width}px`,
+                  height: `${uncroppedImageRenderSize.height}px`,
+                  objectFit: 'contain',
+                  transform: cropImageTransforms,
+                }}
+              />
+            </ReactCrop>
+            {isStraightenActive && (
+              <Stage
+                width={uncroppedImageRenderSize.width}
+                height={uncroppedImageRenderSize.height}
+                style={{ position: 'absolute', top: 0, left: 0, zIndex: 10, cursor: 'crosshair' }}
+                onMouseDown={handleStraightenMouseDown}
+                onMouseMove={handleStraightenMouseMove}
+                onMouseUp={handleStraightenMouseUp}
+                onMouseLeave={handleStraightenMouseLeave}
+              >
+                <Layer>
+                  {straightenLine && <Line points={[straightenLine.start.x, straightenLine.start.y, straightenLine.end.x, straightenLine.end.y]} stroke="#0ea5e9" strokeWidth={2} dash={[4, 4]} listening={false} />}
+                </Layer>
+              </Stage>
+            )}
+          </div>
         )}
       </div>
     </div>

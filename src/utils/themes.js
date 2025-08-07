@@ -4,7 +4,7 @@ export const THEMES = [
       name: 'Dark',
       splashImage: '/splash-dark.jpg',
       cssVariables: {
-        '--color-bg-primary-rgb': '30, 30, 30',
+        '--color-bg-primary-rgb': '38, 38, 38', 
         '--opacity-bg-primary': '0.6',
         '--color-bg-secondary-rgb': '34, 34, 34',
         '--opacity-bg-secondary': '0.75',
@@ -42,7 +42,7 @@ export const THEMES = [
       name: 'Grey',
       splashImage: '/splash-grey.jpg',
       cssVariables: {
-        '--color-bg-primary-rgb': '80, 80, 80',
+        '--color-bg-primary-rgb': '88, 88, 88',
         '--opacity-bg-primary': '0.7',
         '--color-bg-secondary-rgb': '90, 90, 90',
         '--opacity-bg-secondary': '0.8',

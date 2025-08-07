@@ -1,14 +1,11 @@
 {
   "3": {
     "inputs": {
-      "seed": [
-        "239",
-        0
-      ],
+      "seed": 3,
       "steps": 10,
       "cfg": 1,
-      "sampler_name": "euler_ancestral",
-      "scheduler": "ddim_uniform",
+      "sampler_name": "euler",
+      "scheduler": "sgm_uniform",
       "denoise": 1,
       "model": [
         "4",
@@ -43,7 +40,7 @@
   },
   "6": {
     "inputs": {
-      "text": "",
+      "text": "hand",
       "clip": [
         "4",
         1
@@ -85,7 +82,7 @@
   },
   "11": {
     "inputs": {
-      "image": "1e7f20a7-c46e-413b-9cca-815187079c01.png"
+      "image": "example.png"
     },
     "class_type": "LoadImage",
     "_meta": {
@@ -171,7 +168,7 @@
       "y": 0,
       "resize_source": false,
       "destination": [
-        "84",
+        "83",
         0
       ],
       "source": [
@@ -223,19 +220,10 @@
   },
   "73": {
     "inputs": {
-      "padding": [
-        "77",
-        0
-      ],
-      "constraints": "keep_ratio",
-      "constraint_x": [
-        "75",
-        0
-      ],
-      "constraint_y": [
-        "78",
-        0
-      ],
+      "padding": 128,
+      "constraints": "keep_ratio_divisible",
+      "constraint_x": 2,
+      "constraint_y": 2,
       "min_width": 0,
       "min_height": 0,
       "batch_behavior": "match_ratio",
@@ -249,43 +237,10 @@
       "title": "Mask To Region"
     }
   },
-  "75": {
-    "inputs": {
-      "value": [
-        "174",
-        0
-      ]
-    },
-    "class_type": "ImpactInt",
-    "_meta": {
-      "title": "Width"
-    }
-  },
-  "77": {
-    "inputs": {
-      "value": 128
-    },
-    "class_type": "ImpactInt",
-    "_meta": {
-      "title": "Padding"
-    }
-  },
-  "78": {
-    "inputs": {
-      "value": [
-        "174",
-        1
-      ]
-    },
-    "class_type": "ImpactInt",
-    "_meta": {
-      "title": "Height"
-    }
-  },
   "80": {
     "inputs": {
       "mask": [
-        "164",
+        "152",
         0
       ]
     },
@@ -309,14 +264,8 @@
   },
   "82": {
     "inputs": {
-      "force_resize_width": [
-        "75",
-        0
-      ],
-      "force_resize_height": [
-        "78",
-        0
-      ],
+      "force_resize_width": 0,
+      "force_resize_height": 0,
       "image": [
         "80",
         0
@@ -333,14 +282,8 @@
   },
   "83": {
     "inputs": {
-      "force_resize_width": [
-        "75",
-        0
-      ],
-      "force_resize_height": [
-        "78",
-        0
-      ],
+      "force_resize_width": 0,
+      "force_resize_height": 0,
       "image": [
         "11",
         0
@@ -353,30 +296,6 @@
     "class_type": "Cut By Mask",
     "_meta": {
       "title": "Cut By Mask"
-    }
-  },
-  "84": {
-    "inputs": {
-      "images": [
-        "83",
-        0
-      ]
-    },
-    "class_type": "Images to RGB",
-    "_meta": {
-      "title": "Images to RGB"
-    }
-  },
-  "85": {
-    "inputs": {
-      "mask": [
-        "81",
-        0
-      ]
-    },
-    "class_type": "MaskPreview+",
-    "_meta": {
-      "title": "🔧 Mask Preview"
     }
   },
   "91": {
@@ -418,7 +337,7 @@
       "force_resize_width": 0,
       "force_resize_height": 0,
       "image": [
-        "153",
+        "8",
         0
       ],
       "mask": [
@@ -455,23 +374,10 @@
       "title": "Mask to Image"
     }
   },
-  "107": {
-    "inputs": {
-      "device": "cpu",
-      "image": [
-        "8",
-        0
-      ]
-    },
-    "class_type": "ImageToDevice+",
-    "_meta": {
-      "title": "🔧 Image To Device"
-    }
-  },
   "121": {
     "inputs": {
       "pixels": [
-        "84",
+        "83",
         0
       ],
       "vae": [
@@ -487,7 +393,7 @@
   "125": {
     "inputs": {
       "images": [
-        "107",
+        "8",
         0
       ]
     },
@@ -518,39 +424,6 @@
       "title": "Load Image (as Mask)"
     }
   },
-  "149": {
-    "inputs": {
-      "image": [
-        "11",
-        0
-      ]
-    },
-    "class_type": "GetImageSize+",
-    "_meta": {
-      "title": "🔧 Get Image Size"
-    }
-  },
-  "150": {
-    "inputs": {
-      "height": [
-        "149",
-        1
-      ],
-      "width": [
-        "149",
-        0
-      ],
-      "interpolation_mode": "bicubic",
-      "mask": [
-        "152",
-        0
-      ]
-    },
-    "class_type": "JWMaskResize",
-    "_meta": {
-      "title": "Mask Resize"
-    }
-  },
   "152": {
     "inputs": {
       "mask": [
@@ -561,67 +434,6 @@
     "class_type": "InvertMask",
     "_meta": {
       "title": "InvertMask"
-    }
-  },
-  "153": {
-    "inputs": {
-      "device": "cpu",
-      "image": [
-        "107",
-        0
-      ]
-    },
-    "class_type": "ImageToDevice+",
-    "_meta": {
-      "title": "🔧 Image To Device"
-    }
-  },
-  "164": {
-    "inputs": {
-      "amount": 32,
-      "mask": [
-        "150",
-        0
-      ]
-    },
-    "class_type": "MaskSmooth+",
-    "_meta": {
-      "title": "🔧 Mask Smooth"
-    }
-  },
-  "173": {
-    "inputs": {
-      "upscale_method": "nearest-exact",
-      "megapixels": 1.2800000000000002,
-      "image": [
-        "11",
-        0
-      ]
-    },
-    "class_type": "ImageScaleToTotalPixels",
-    "_meta": {
-      "title": "Scale Image to Total Pixels"
-    }
-  },
-  "174": {
-    "inputs": {
-      "image": [
-        "173",
-        0
-      ]
-    },
-    "class_type": "GetImageSize+",
-    "_meta": {
-      "title": "🔧 Get Image Size"
-    }
-  },
-  "239": {
-    "inputs": {
-      "seed": 119
-    },
-    "class_type": "CR Seed",
-    "_meta": {
-      "title": "🌱 CR Seed"
     }
   },
   "252": {
@@ -659,13 +471,25 @@
       "decay_factor": 1,
       "fill_holes": false,
       "mask": [
-        "164",
+        "152",
         0
       ]
     },
     "class_type": "GrowMaskWithBlur",
     "_meta": {
       "title": "Grow Mask With Blur"
+    }
+  },
+  "261": {
+    "inputs": {
+      "images": [
+        "82",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
     }
   }
 }

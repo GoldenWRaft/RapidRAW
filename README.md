@@ -16,7 +16,7 @@
 
 > A beautiful, non-destructive, and GPU-accelerated RAW image editor built with performance in mind.
 
-RapidRAW is a modern, high-performance alternative to Adobe Lightroom®. It delivers a simple, beautiful editing experience in a lightweight package (under 30MB) for Windows, macOS, and Linux.
+RapidRAW is a modern, high-performance alternative to Adobe Lightroom®. It delivers a simple, beautiful editing experience in a lightweight package (under 20MB) for Windows, macOS, and Linux.
 
 I developed this project as a personal challenge at the age of 18. My goal was to create a high-performance tool for my own photography workflow while deepening my understanding of both React and Rust, with the support from Google Gemini.
 
@@ -51,22 +51,27 @@ RapidRAW is still in active development and isn't yet as polished as mature tool
 <details>
 <summary><strong>Recent Changes</strong></summary>
 
+*   **2025-08-05:** Improved HSL cascading, UI & animation improvements, ability to grow & shrink / feather AI masks
+*   **2025-08-03:** New high performance, seamless image panorama stitcher (without any dependencies on OpenCV)
+*   **2025-08-02:** Added an image straightening tool and improved crop & rotation functionality (especially on portrait images)
+*   **2025-08-02:** A new dedicated image importer, ability to rename and batch rename files, improved dark theme, and other fixes
+*   **2025-07-31:** Ability to tag & filter images by color labels, refactored image right clicking
 *   **2025-07-31:** Reimplemented the functionality of GPU processing (GPU cropping, etc.) -> No longer dependent on TEXTURE_BINDING_ARRAY
 *   **2025-07-29:** Refactored generative AI foundation, many small fixes
 *   **2025-07-27:** Automatic AI image tagging, overall mask transparency setting per mask
 *   **2025-07-25:** Fuji RAF X-Trans sensor support (new x-trans demosaicing algo)
 *   **2025-07-24:** Auto crop when cropping an image (to prevent black borders), added drag & drop sort abilty to presets panel
 *   **2025-07-22:** Significant improvements to the shader: More accurate exposure slider, better tone mapper (simplified ACES)
+
+<details>
+<summary><strong>Expand further</strong></summary>
+
 *   **2025-07-21:** Remember scroll position when going into the editing section
 *   **2025-07-20:** Ability to add presets to folders, export preset folders etc, preset _animations_
 *   **2025-07-20:** Tutorials on how to use RapidRAW
 *   **2025-07-19:** Initial color negative conversion implementation, shader improvements
 *   **2025-07-19:** New color wheels, persistent collapsed / expanded state for UI elements 
 *   **2025-07-19:** Fixed banding & purple artefacts on RAW images, better color noise reduction, show exposure in stops
-
-<details>
-<summary><strong>Expand further</strong></summary>
-
 *   **2025-07-18:** Smooth zoom slider, new adaptive editor theme setting
 *   **2025-07-18:** New export functionality: Export with metadata, GPS metadata remover, batch export file naming scheme using tags
 *   **2025-07-18:** Ability to delete the associated RAW/JPEG in right click delete operations
@@ -144,7 +149,7 @@ RapidRAW is still in active development and isn't yet as polished as mature tool
       <ul>
         <li><strong>Image Library:</strong> Effortlessly sort, rate, tag, and manage your entire photo collection for a streamlined and efficient workflow.</li>
         <li><strong>Folder Management:</strong> Integrated folder tree, create, rename, and delete folders directly within the app.</li>
-        <li><strong>File Operations:</strong> Copy, move, and duplicate images and their associated edits.</li>
+        <li><strong>File Operations:</strong> Import, copy, move, rename, and duplicate images and their associated edits.</li>
         <li><strong>Filmstrip View:</strong> Quickly navigate between all the images in your current folder while editing.</li>
         <li><strong>Batch Operations:</strong> Save significant time by applying a consistent set of adjustments or exporting entire batches of images simultaneously.</li>
         <li><strong>EXIF Data Viewer:</strong> Gain insights by inspecting the complete metadata from your camera, including shutter speed, aperture, ISO, and lens information.</li>

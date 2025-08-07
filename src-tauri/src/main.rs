@@ -11,8 +11,9 @@ mod formats;
 mod image_loader;
 mod lut_processes;
 mod tagging;
-mod tag_candidates;
-mod tag_hierarchy;
+mod tagging_utils;
+mod panorama_stitching;
+mod panorama_utils;
 
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
@@ -20,8 +21,9 @@ use std::thread;
 use std::fs;
 use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
+use std::path::Path;
 
-use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Rgba, RgbaImage, ImageFormat, GrayImage};
+use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Rgba, RgbaImage, ImageFormat, GrayImage, RgbImage};
 use image::codecs::jpeg::JpegEncoder;
 use imageproc::morphology::dilate;
 use imageproc::distance_transform::Norm as DilationNorm;
@@ -32,15 +34,15 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::task::JoinHandle;
 use window_vibrancy::{apply_acrylic, apply_vibrancy, NSVisualEffectMaterial};
 use serde::{Serialize, Deserialize};
-use chrono::Local;
 use little_exif::metadata::Metadata;
 use little_exif::exif_tag::ExifTag;
 use little_exif::filetype::FileExtension;
 use little_exif::rational::uR64;
+use chrono::{DateTime, Utc};
 
 use crate::image_processing::{
     get_all_adjustments_from_json, get_or_init_gpu_context, GpuContext,
-    ImageMetadata, process_and_get_dynamic_image, Crop, apply_crop, apply_rotation, apply_flip,
+    ImageMetadata, process_and_get_dynamic_image, Crop, apply_crop, apply_rotation, apply_flip, apply_coarse_rotation,
 };
 use crate::file_management::{get_sidecar_path, load_settings, AppSettings};
 use crate::mask_generation::{MaskDefinition, generate_mask_bitmap, AiPatchDefinition};
@@ -50,6 +52,7 @@ use crate::ai_processing::{
 };
 use crate::formats::{is_raw_file};
 use crate::image_loader::{load_base_image_from_bytes, composite_patches_on_image, load_and_composite};
+use tagging_utils::{candidates, hierarchy};
 
 use crate::lut_processes::*;
 
@@ -76,6 +79,7 @@ pub struct AppState {
     ai_state: Mutex<Option<AiState>>,
     ai_init_lock: TokioMutex<()>,
     export_task_handle: Mutex<Option<JoinHandle<()>>>,
+    panorama_result: Arc<Mutex<Option<RgbImage>>>,
     indexing_task_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -120,11 +124,13 @@ fn apply_all_transformations(
     adjustments: &serde_json::Value,
     scale: f32,
 ) -> (DynamicImage, (f32, f32)) {
+    let orientation_steps = adjustments["orientationSteps"].as_u64().unwrap_or(0) as u8;
     let rotation_degrees = adjustments["rotation"].as_f64().unwrap_or(0.0) as f32;
     let flip_horizontal = adjustments["flipHorizontal"].as_bool().unwrap_or(false);
     let flip_vertical = adjustments["flipVertical"].as_bool().unwrap_or(false);
 
-    let flipped_image = apply_flip(image.clone(), flip_horizontal, flip_vertical);
+    let coarse_rotated_image = apply_coarse_rotation(image.clone(), orientation_steps);
+    let flipped_image = apply_flip(coarse_rotated_image, flip_horizontal, flip_vertical);
     let rotated_image = apply_rotation(&flipped_image, rotation_degrees);
 
     let crop_data: Option<Crop> = serde_json::from_value(adjustments["crop"].clone()).ok();
@@ -150,6 +156,9 @@ fn apply_all_transformations(
 fn calculate_transform_hash(adjustments: &serde_json::Value) -> u64 {
     let mut hasher = DefaultHasher::new();
     
+    let orientation_steps = adjustments["orientationSteps"].as_u64().unwrap_or(0);
+    orientation_steps.hash(&mut hasher);
+
     let rotation = adjustments["rotation"].as_f64().unwrap_or(0.0);
     (rotation.to_bits()).hash(&mut hasher);
 
@@ -167,29 +176,23 @@ fn calculate_transform_hash(adjustments: &serde_json::Value) -> u64 {
     
     if let Some(patches_val) = adjustments.get("aiPatches") {
         if let Some(patches_arr) = patches_val.as_array() {
-            // Hash the number of patches to catch additions/removals
             patches_arr.len().hash(&mut hasher);
 
             for patch in patches_arr {
-                // Hash unique ID
                 if let Some(id) = patch.get("id").and_then(|v| v.as_str()) {
                     id.hash(&mut hasher);
                 }
-                // Hash visibility
+
                 let is_visible = patch.get("visible").and_then(|v| v.as_bool()).unwrap_or(true);
                 is_visible.hash(&mut hasher);
 
-                // Hash the length of the patch data. This detects when it's added.
                 let data_len = patch.get("patchDataBase64").and_then(|v| v.as_str()).unwrap_or("").len();
                 data_len.hash(&mut hasher);
 
-                // Hash the entire subMasks structure by converting it to a string.
-                // This is crucial for detecting changes in the selection mask.
                 if let Some(sub_masks_val) = patch.get("subMasks") {
                     sub_masks_val.to_string().hash(&mut hasher);
                 }
 
-                // Also hash other properties that define the mask's appearance
                 let invert = patch.get("invert").and_then(|v| v.as_bool()).unwrap_or(false);
                 invert.hash(&mut hasher);
             }
@@ -394,18 +397,21 @@ fn generate_uncropped_preview(
             },
         };
         
-        let (full_w, full_h) = (loaded_image.full_width, loaded_image.full_height);
+        let orientation_steps = adjustments_clone["orientationSteps"].as_u64().unwrap_or(0) as u8;
+        let coarse_rotated_image = apply_coarse_rotation(patched_image, orientation_steps);
 
         let settings = load_settings(app_handle.clone()).unwrap_or_default();
         let preview_dim = settings.editor_preview_resolution.unwrap_or(1920);
 
+        let (rotated_w, rotated_h) = coarse_rotated_image.dimensions();
+
         let (processing_base, scale_for_gpu) = 
-            if full_w > preview_dim || full_h > preview_dim {
-                let base = patched_image.thumbnail(preview_dim, preview_dim);
-                let scale = if full_w > 0 { base.width() as f32 / full_w as f32 } else { 1.0 };
+            if rotated_w > preview_dim || rotated_h > preview_dim {
+                let base = coarse_rotated_image.thumbnail(preview_dim, preview_dim);
+                let scale = if rotated_w > 0 { base.width() as f32 / rotated_w as f32 } else { 1.0 };
                 (base, scale)
             } else {
-                (patched_image.clone(), 1.0)
+                (coarse_rotated_image.clone(), 1.0)
             };
         
         let (preview_width, preview_height) = processing_base.dimensions();
@@ -658,8 +664,33 @@ async fn batch_export_images(
                 }
 
                 let original_path = std::path::Path::new(image_path_str);
+                
+                let file_date: DateTime<Utc> = Metadata::new_from_path(original_path)
+                    .ok()
+                    .and_then(|metadata| {
+                        metadata
+                            .get_tag(&ExifTag::DateTimeOriginal("".to_string()))
+                            .next()
+                            .and_then(|tag| {
+                                if let &ExifTag::DateTimeOriginal(ref dt_str) = tag {
+                                    chrono::NaiveDateTime::parse_from_str(dt_str, "%Y:%m:%d %H:%M:%S")
+                                        .ok()
+                                        .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
+                                } else {
+                                    None
+                                }
+                            })
+                    })
+                    .unwrap_or_else(|| {
+                        fs::metadata(original_path)
+                            .ok()
+                            .and_then(|m| m.created().ok())
+                            .map(DateTime::<Utc>::from)
+                            .unwrap_or_else(Utc::now)
+                    });
+
                 let filename_template = export_settings.filename_template.as_deref().unwrap_or("{original_filename}_edited");
-                let new_stem = generate_filename_from_template(filename_template, original_path, i + 1, total_paths);
+                let new_stem = crate::file_management::generate_filename_from_template(filename_template, original_path, i + 1, total_paths, &file_date);
                 let new_filename = format!("{}.{}", new_stem, output_format);
                 let output_path = output_folder_path.join(new_filename);
 
@@ -720,28 +751,6 @@ fn cancel_export(state: tauri::State<AppState>) -> Result<(), String> {
         return Err("No export task is currently running.".to_string());
     }
     Ok(())
-}
-
-fn generate_filename_from_template(
-    template: &str,
-    original_path: &std::path::Path,
-    sequence: usize,
-    total: usize,
-) -> String {
-    let now = Local::now();
-    let stem = original_path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
-    let sequence_str = format!("{:0width$}", sequence, width = total.to_string().len().max(1));
-
-    let mut result = template.to_string();
-    result = result.replace("{original_filename}", stem);
-    result = result.replace("{sequence}", &sequence_str);
-    result = result.replace("{YYYY}", &now.format("%Y").to_string());
-    result = result.replace("{MM}", &now.format("%m").to_string());
-    result = result.replace("{DD}", &now.format("%d").to_string());
-    result = result.replace("{hh}", &now.format("%H").to_string());
-    result = result.replace("{mm}", &now.format("%M").to_string());
-
-    result
 }
 
 fn write_image_with_metadata(
@@ -854,6 +863,7 @@ async fn generate_ai_foreground_mask(
     rotation: f32,
     flip_horizontal: bool,
     flip_vertical: bool,
+    orientation_steps: u8,
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<AiForegroundMaskParameters, String> {
@@ -870,6 +880,7 @@ async fn generate_ai_foreground_mask(
         rotation: Some(rotation),
         flip_horizontal: Some(flip_horizontal),
         flip_vertical: Some(flip_vertical),
+        orientation_steps: Some(orientation_steps),
     })
 }
 
@@ -881,6 +892,7 @@ async fn generate_ai_subject_mask(
     rotation: f32,
     flip_horizontal: bool,
     flip_vertical: bool,
+    orientation_steps: u8,
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<AiSubjectMaskParameters, String> {
@@ -916,7 +928,14 @@ async fn generate_ai_subject_mask(
     };
 
     let (img_w, img_h) = embeddings.original_size;
-    let center = (img_w as f64 / 2.0, img_h as f64 / 2.0);
+
+    let (coarse_rotated_w, coarse_rotated_h) = if orientation_steps % 2 == 1 {
+        (img_h as f64, img_w as f64)
+    } else {
+        (img_w as f64, img_h as f64)
+    };
+
+    let center = (coarse_rotated_w / 2.0, coarse_rotated_h / 2.0);
 
     let p1 = start_point;
     let p2 = (start_point.0, end_point.1);
@@ -944,10 +963,10 @@ async fn generate_ai_subject_mask(
         let mut new_px = p.0;
         let mut new_py = p.1;
         if flip_horizontal {
-            new_px = img_w as f64 - p.0;
+            new_px = coarse_rotated_w - p.0;
         }
         if flip_vertical {
-            new_py = img_h as f64 - p.1;
+            new_py = coarse_rotated_h - p.1;
         }
         (new_px, new_py)
     };
@@ -957,10 +976,25 @@ async fn generate_ai_subject_mask(
     let ufp3 = unflip(up3);
     let ufp4 = unflip(up4);
 
-    let min_x = ufp1.0.min(ufp2.0).min(ufp3.0).min(ufp4.0);
-    let min_y = ufp1.1.min(ufp2.1).min(ufp3.1).min(ufp4.1);
-    let max_x = ufp1.0.max(ufp2.0).max(ufp3.0).max(ufp4.0);
-    let max_y = ufp1.1.max(ufp2.1).max(ufp3.1).max(ufp4.1);
+    let un_coarse_rotate = |p: (f64, f64)| -> (f64, f64) {
+        match orientation_steps {
+            0 => p,
+            1 => (p.1, img_h as f64 - p.0),
+            2 => (img_w as f64 - p.0, img_h as f64 - p.1),
+            3 => (img_w as f64 - p.1, p.0),
+            _ => p,
+        }
+    };
+
+    let ucrp1 = un_coarse_rotate(ufp1);
+    let ucrp2 = un_coarse_rotate(ufp2);
+    let ucrp3 = un_coarse_rotate(ufp3);
+    let ucrp4 = un_coarse_rotate(ufp4);
+
+    let min_x = ucrp1.0.min(ucrp2.0).min(ucrp3.0).min(ucrp4.0);
+    let min_y = ucrp1.1.min(ucrp2.1).min(ucrp3.1).min(ucrp4.1);
+    let max_x = ucrp1.0.max(ucrp2.0).max(ucrp3.0).max(ucrp4.0);
+    let max_y = ucrp1.1.max(ucrp2.1).max(ucrp3.1).max(ucrp4.1);
 
     let unrotated_start_point = (min_x, min_y);
     let unrotated_end_point = (max_x, max_y);
@@ -977,6 +1011,7 @@ async fn generate_ai_subject_mask(
         rotation: Some(rotation),
         flip_horizontal: Some(flip_horizontal),
         flip_vertical: Some(flip_vertical),
+        orientation_steps: Some(orientation_steps),
     })
 }
 
@@ -1112,6 +1147,89 @@ fn get_supported_file_types() -> Result<serde_json::Value, String> {
     }))
 }
 
+#[tauri::command]
+async fn stitch_panorama(
+    paths: Vec<String>,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if paths.len() < 2 {
+        return Err("Please select at least two images to stitch.".to_string());
+    }
+
+    let panorama_result_handle = state.panorama_result.clone();
+
+    let task = tokio::task::spawn_blocking(move || {
+        let panorama_result = panorama_stitching::stitch_images(paths, app_handle.clone());
+
+        match panorama_result {
+            Ok(panorama_image) => {
+                let _ = app_handle.emit("panorama-progress", "Creating preview...");
+
+                let (w, h) = panorama_image.dimensions();
+                let (new_w, new_h) = if w > h {
+                    (800, (800.0 * h as f32 / w as f32).round() as u32)
+                } else {
+                    ((800.0 * w as f32 / h as f32).round() as u32, 800)
+                };
+                let preview_image = image::imageops::resize(
+                    &panorama_image,
+                    new_w,
+                    new_h,
+                    image::imageops::FilterType::Triangle,
+                );
+                
+                let mut buf = Cursor::new(Vec::new());
+                
+                if let Err(e) = preview_image.write_to(&mut buf, ImageFormat::Png) {
+                    return Err(format!("Failed to encode panorama preview: {}", e));
+                }
+                
+                let base64_str = general_purpose::STANDARD.encode(buf.get_ref());
+                let final_base64 = format!("data:image/png;base64,{}", base64_str);
+
+                *panorama_result_handle.lock().unwrap() = Some(panorama_image);
+
+                let _ = app_handle.emit("panorama-complete", serde_json::json!({
+                    "base64": final_base64,
+                }));
+                Ok(())
+            }
+            Err(e) => {
+                let _ = app_handle.emit("panorama-error", e.clone());
+                Err(e)
+            }
+        }
+    });
+
+    match task.await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(e),
+        Err(join_err) => Err(format!("Panorama task failed: {}", join_err)),
+    }
+}
+
+#[tauri::command]
+async fn save_panorama(
+    first_path_str: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let panorama_image = state.panorama_result.lock().unwrap().take()
+        .ok_or_else(|| "No panorama image found in memory to save. It might have already been saved.".to_string())?;
+
+    let first_path = Path::new(&first_path_str);
+    let parent_dir = first_path.parent().ok_or_else(|| "Could not determine parent directory of the first image.".to_string())?;
+    let stem = first_path.file_stem().and_then(|s| s.to_str()).unwrap_or("panorama");
+
+    let output_filename = format!("{}_Pano.png", stem);
+    let output_path = parent_dir.join(output_filename);
+
+    panorama_image.save(&output_path)
+        .map_err(|e| format!("Failed to save panorama image: {}", e))?;
+
+    Ok(output_path.to_string_lossy().to_string())
+}
+
 fn apply_window_effect(theme: String, window: impl raw_window_handle::HasWindowHandle) {
     #[cfg(target_os = "windows")]
     {
@@ -1171,6 +1289,7 @@ fn main() {
                         gpu_context: Mutex::new(Some(gpu_context)),
                         ai_state: Mutex::new(None),
                         ai_init_lock: TokioMutex::new(()),
+                        panorama_result: Arc::new(Mutex::new(None)),
                         export_task_handle: Mutex::new(None),
                         indexing_task_handle: Mutex::new(None),
                     });
@@ -1240,6 +1359,8 @@ fn main() {
             test_comfyui_connection,
             invoke_generative_replace_with_mask_def,
             get_supported_file_types,
+            stitch_panorama,
+            save_panorama,
             image_processing::generate_histogram,
             image_processing::generate_waveform,
             image_processing::load_file_data,
@@ -1256,6 +1377,7 @@ fn main() {
             file_management::copy_files,
             file_management::move_files,
             file_management::rename_folder,
+            file_management::rename_files,
             file_management::duplicate_file,
             file_management::show_in_finder,
             file_management::delete_files_from_disk,
@@ -1273,6 +1395,8 @@ fn main() {
             file_management::handle_export_presets_to_file,
             file_management::clear_all_sidecars,
             file_management::clear_thumbnail_cache,
+            file_management::set_color_label_for_paths,
+            file_management::import_files,
             tagging::start_background_indexing,
             tagging::clear_all_tags
         ])

@@ -78,7 +78,7 @@ export default function LibraryExportPanel({ multiSelectedPaths, onClose, isVisi
     setExportState({ status: 'exporting', progress: { current: 0, total: numImages }, errorMessage: '' });
 
     let finalFilenameTemplate = filenameTemplate;
-    if (numImages > 1 && !filenameTemplate.includes('{sequence}')) {
+    if (numImages > 1 && !filenameTemplate.includes('{sequence}') && !filenameTemplate.includes('{original_filename}')) {
       finalFilenameTemplate = `${filenameTemplate}_{sequence}`;
       setFilenameTemplate(finalFilenameTemplate);
     }

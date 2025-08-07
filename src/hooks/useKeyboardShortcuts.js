@@ -16,10 +16,13 @@ export const useKeyboardShortcuts = ({
   activeAiPatchContainerId,
   customEscapeHandler,
   copiedFilePaths,
+  isStraightenActive,
+  setIsStraightenActive,
   handleImageSelect,
   setLibraryActivePath,
   setMultiSelectedPaths,
   handleRate,
+  handleSetColorLabel,
   handleDeleteSelected,
   handleCopyAdjustments,
   handlePasteAdjustments,
@@ -42,12 +45,16 @@ export const useKeyboardShortcuts = ({
       const isInputFocused = document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA';
       if (isInputFocused) return;
       const isCtrl = event.ctrlKey || event.metaKey;
+      const isShift = event.shiftKey;
       const key = event.key.toLowerCase();
+      const code = event.code;
 
       if (selectedImage) {
         if (key === 'escape') {
           event.preventDefault();
-          if (customEscapeHandler) {
+          if (isStraightenActive) {
+            setIsStraightenActive(false);
+          } else if (customEscapeHandler) {
             customEscapeHandler();
           } else if (activeAiSubMaskId) {
             setActiveAiSubMaskId(null);
@@ -118,7 +125,24 @@ export const useKeyboardShortcuts = ({
         }
       }
 
-      if (['0', '1', '2', '3', '4', '5'].includes(key) && !isCtrl) { event.preventDefault(); handleRate(parseInt(key, 10)); }
+      if (code.startsWith('Digit') && !isCtrl) {
+        event.preventDefault();
+        const keyNum = parseInt(code.replace('Digit', ''), 10);
+
+        if (isShift) {
+          if (keyNum === 0) {
+            handleSetColorLabel(null);
+          } else if (keyNum >= 1 && keyNum <= 5) {
+            const colors = ['red', 'yellow', 'green', 'blue', 'purple'];
+            handleSetColorLabel(colors[keyNum - 1]);
+          }
+        } else {
+          if (keyNum >= 0 && keyNum <= 5) {
+            handleRate(keyNum);
+          }
+        }
+      }
+      
       if (key === 'delete') { event.preventDefault(); handleDeleteSelected(); }
 
       if (isCtrl) {
@@ -136,5 +160,5 @@ export const useKeyboardShortcuts = ({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [ sortedImageList, selectedImage, undo, redo, isFullScreen, handleToggleFullScreen, handleBackToLibrary, handleRightPanelSelect, handleRate, handleDeleteSelected, handleCopyAdjustments, handlePasteAdjustments, multiSelectedPaths, copiedFilePaths, handlePasteFiles, libraryActivePath, handleImageSelect, zoom, handleZoomChange, customEscapeHandler, activeMaskId, activeAiSubMaskId, activeAiPatchContainerId, isViewLoading, activeRightPanel, canRedo, canUndo, setActiveMaskId, setActiveAiSubMaskId, onSelectPatchContainer, setCopiedFilePaths, setIsWaveformVisible, setLibraryActivePath, setMultiSelectedPaths, setShowOriginal ]);
+  }, [ sortedImageList, selectedImage, undo, redo, isFullScreen, handleToggleFullScreen, handleBackToLibrary, handleRightPanelSelect, handleRate, handleSetColorLabel, handleDeleteSelected, handleCopyAdjustments, handlePasteAdjustments, multiSelectedPaths, copiedFilePaths, handlePasteFiles, libraryActivePath, handleImageSelect, zoom, handleZoomChange, customEscapeHandler, activeMaskId, activeAiSubMaskId, activeAiPatchContainerId, isViewLoading, activeRightPanel, canRedo, canUndo, isStraightenActive, setIsStraightenActive, setActiveMaskId, setActiveAiSubMaskId, onSelectPatchContainer, setCopiedFilePaths, setIsWaveformVisible, setLibraryActivePath, setMultiSelectedPaths, setShowOriginal ]);
 };

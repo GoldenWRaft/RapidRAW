@@ -66,7 +66,7 @@ export const INITIAL_ADJUSTMENTS = {
     luma: [{ x: 0, y: 0 }, { x: 255, y: 255 }], red: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
     green: [{ x: 0, y: 0 }, { x: 255, y: 255 }], blue: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
   },
-  crop: null, aspectRatio: null, rotation: 0, flipHorizontal: false, flipVertical: false,
+  crop: null, aspectRatio: null, rotation: 0, flipHorizontal: false, flipVertical: false, orientationSteps: 0,
   masks: [],
   aiPatches: [],
   sectionVisibility: {

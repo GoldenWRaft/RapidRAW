@@ -44,8 +44,6 @@ jobs:
           repository: ${{ inputs.repository }}
           ref: ${{ inputs.ref }}
           fetch-depth: 0
-          filter: tree:0
-          fetch-tags: true
 
       - name: Determine Version
         id: determine-version
@@ -58,15 +56,9 @@ jobs:
             APP_VERSION="${REF#refs/tags/v}"
             echo "Release version determined from tag: $APP_VERSION"
           else
-            if [[ "${{ inputs.platform }}" == windows* ]]; then
-              DESCRIBE="$(git describe --tags --always --abbrev=0)"
-              APP_VERSION="${DESCRIBE#v}"
-              echo "CI version determined from 'git describe': $APP_VERSION"
-            else
-              DESCRIBE="$(git describe --tags --always)"
-              APP_VERSION="${DESCRIBE#v}"
-              echo "CI version determined from 'git describe': $APP_VERSION"
-            fi
+            DESCRIBE=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            APP_VERSION="${DESCRIBE#v}"
+            echo "CI version determined from latest tag or fallback: $APP_VERSION"
           fi
           
           echo "version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
@@ -151,11 +143,18 @@ jobs:
         shell: bash
         if: ${{ startsWith(inputs.platform, 'windows') && inputs.release-id == '' }}
         run: |
-          find src-tauri/target/release/bundle -name "*.exe" | while read -r file; do
-            name="${{ inputs.asset-prefix }}_${{ inputs.platform }}_$(basename "$file")"
-            echo "Uploading $name, file: $file"
-            # TODO zip the file before upload
-            gh-actions-artifact-client.js upload "${name}" --retentionDays=7 < "$file"
+          for d in src-tauri/target/${{ inputs.target || 'release' }}/bundle src-tauri/target/${{ inputs.target || 'release' }}/release/bundle ; do
+            echo "Scanning ${d} for artifacts to upload..."
+            if [ ! -d "${d}" ]; then
+              echo "${d} doesn't exist, skipping"
+              continue
+            fi
+            find "${d}" -name "*.exe" | while read -r file; do
+              name="${{ inputs.asset-prefix }}_${{ inputs.platform }}_$(basename "$file")"
+              echo "Uploading ${name}, file: ${file}"
+              # TODO zip the file before upload
+              gh-actions-artifact-client.js upload "${name}" --retentionDays=7 < "$file"
+            done
           done
 
       - name: Upload binaries (Linux/macOS)

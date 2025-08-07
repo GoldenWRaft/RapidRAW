@@ -21,7 +21,7 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0, onDr
   const [isEditing, setIsEditing] = useState(false);
   const [inputValue, setInputValue] = useState(String(value));
   const inputRef = useRef(null);
-  const [isHovered, setIsHovered] = useState(false);
+  const [isLabelHovered, setIsLabelHovered] = useState(false);
   const containerRef = useRef(null);
   
   useEffect(() => {
@@ -31,9 +31,6 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0, onDr
   useEffect(() => {
     const handleDragEndGlobal = () => {
       setIsDragging(false);
-      if (containerRef.current && !containerRef.current.matches(':hover')) {
-        setIsHovered(false);
-      }
     };
 
     if (isDragging) {
@@ -157,7 +154,7 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0, onDr
       return;
     }
 
-    const globalKeys = [' ', 'ArrowUp', 'ArrowDown', 'f'];
+    const globalKeys = [' ', 'ArrowUp', 'ArrowDown', 'f', 'b', 'w'];
 
     if (globalKeys.includes(e.key)) {
       e.target.blur();
@@ -169,52 +166,34 @@ const Slider = ({ label, value, onChange, min, max, step, defaultValue = 0, onDr
   
   const numericValue = isNaN(Number(value)) ? 0 : Number(value);
 
-  const ResetIcon = () => (
-    <svg 
-      width="14" 
-      height="14" 
-      viewBox="0 0 24 24" 
-      fill="none" 
-      stroke="currentColor" 
-      strokeWidth="2" 
-      strokeLinecap="round" 
-      strokeLinejoin="round"
-      className="text-text-secondary hover:text-text-primary transition-colors duration-150"
-    >
-      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-      <path d="M21 3v5h-5" />
-      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-      <path d="M3 21v-5h5" />
-    </svg>
-  );
-
   return (
     <div 
       ref={containerRef}
       className="mb-2"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => {
-        if (!isDragging) {
-          setIsHovered(false);
-        }
-      }}
     >
       <div className="flex justify-between items-center mb-1">
-        <div 
-          className="flex items-center gap-2 cursor-pointer"
-          onDoubleClick={handleReset}
-          title={typeof label === 'string' && label ? `Double-click to reset ${label.toLowerCase()}` : 'Double-click to reset'}
+        <div
+          className={`grid ${typeof label === 'string' ? 'cursor-pointer' : ''}`}
+          onMouseEnter={typeof label === 'string' ? () => setIsLabelHovered(true) : undefined}
+          onMouseLeave={typeof label === 'string' ? () => setIsLabelHovered(false) : undefined}
+          onClick={typeof label === 'string' ? handleReset : undefined}
+          onDoubleClick={typeof label === 'string' ? handleReset : undefined}
+          title={typeof label === 'string' && label ? `Click or double-click to reset ${label.toLowerCase()} to ${defaultValue}` : ''}
         >
-          <label className="text-sm font-medium text-text-secondary select-none">{label}</label>
+          <span
+            className={`col-start-1 row-start-1 text-sm font-medium text-text-secondary select-none transition-opacity duration-200 ease-in-out ${isLabelHovered && typeof label === 'string' ? 'opacity-0' : 'opacity-100'}`}
+            aria-hidden={isLabelHovered && typeof label === 'string'}
+          >
+            {label}
+          </span>
+
           {typeof label === 'string' && (
-            <button
-              onClick={handleReset}
-              className={`p-0.5 rounded hover:bg-card-active transition-all duration-200 cursor-pointer active:scale-95 ${isHovered && !isDragging ? 'opacity-100' : 'opacity-0'}`}
-              title={`Reset to ${defaultValue}`}
-              type="button"
+            <span
+              className={`col-start-1 row-start-1 text-sm font-medium text-text-primary select-none transition-opacity duration-200 ease-in-out pointer-events-none ${isLabelHovered ? 'opacity-100' : 'opacity-0'}`}
+              aria-hidden={!isLabelHovered}
             >
-              <ResetIcon />
-            </button>
+              Reset
+            </span>
           )}
         </div>
         <div className="w-12 text-right">

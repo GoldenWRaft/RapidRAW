@@ -111,7 +111,7 @@ export default function BottomBar({
       e.target.blur();
       return;
     }
-    const globalKeys = [' ', 'ArrowUp', 'ArrowDown', 'f'];
+    const globalKeys = [' ', 'ArrowUp', 'ArrowDown', 'f', 'b', 'w'];
     if (globalKeys.includes(e.key)) {
       e.target.blur();
     }

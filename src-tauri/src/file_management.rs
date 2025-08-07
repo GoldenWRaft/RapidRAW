@@ -17,6 +17,9 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 use walkdir::WalkDir;
+use chrono::{DateTime, Utc};
+use little_exif::exif_tag::ExifTag;
+use little_exif::metadata::Metadata;
 
 use crate::gpu_processing;
 use crate::formats::is_supported_image_file;
@@ -24,8 +27,9 @@ use crate::image_processing::GpuContext;
 use crate::image_loader;
 use crate::image_processing::{
     apply_crop, apply_flip, apply_rotation, auto_results_to_json, get_all_adjustments_from_json,
-    perform_auto_analysis, Crop, ImageMetadata,
+    perform_auto_analysis, Crop, ImageMetadata, apply_coarse_rotation,
 };
+use crate::tagging::COLOR_TAG_PREFIX;
 use crate::mask_generation::{generate_mask_bitmap, MaskDefinition};
 use crate::AppState;
 
@@ -70,6 +74,8 @@ pub struct SortCriteria {
 pub struct FilterCriteria {
     pub rating: u8,
     pub raw_status: String,
+    #[serde(default)]
+    pub colors: Vec<String>,
 }
 
 impl Default for FilterCriteria {
@@ -77,6 +83,7 @@ impl Default for FilterCriteria {
         Self {
             rating: 0,
             raw_status: "all".to_string(),
+            colors: Vec::new(),
         }
     }
 }
@@ -104,6 +111,7 @@ pub struct AppSettings {
     pub ui_visibility: Option<Value>,
     pub enable_ai_tagging: Option<bool>,
     pub tagging_thread_count: Option<u32>,
+    pub thumbnail_size: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -125,17 +133,27 @@ impl Default for AppSettings {
             ui_visibility: None,
             enable_ai_tagging: Some(false),
             tagging_thread_count: Some(3),
+            thumbnail_size: Some("medium".to_string()),
         }
     }
 }
 
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ImageFile {
     path: String,
     modified: u64,
     is_edited: bool,
     tags: Option<Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSettings {
+    pub filename_template: String,
+    pub organize_by_date: bool,
+    pub date_folder_format: String,
+    pub delete_after_import: bool,
 }
 
 #[tauri::command]
@@ -387,17 +405,18 @@ pub fn generate_thumbnail_data(
     } else {
         image_loader::load_and_composite(path_str, &adjustments, true)?
     };
-    let original_dims = base_image.dimensions();
 
     if let (Some(context), Some(meta)) = (gpu_context, metadata) {
         if !meta.adjustments.is_null() {
             const THUMBNAIL_PROCESSING_DIM: u32 = 1280;
-            let (full_w, full_h) = original_dims;
+            let orientation_steps = meta.adjustments["orientationSteps"].as_u64().unwrap_or(0) as u8;
+            let coarse_rotated_image = apply_coarse_rotation(base_image, orientation_steps);
+            let (full_w, full_h) = coarse_rotated_image.dimensions();
 
             let (processing_base, scale_for_gpu) =
                 if full_w > THUMBNAIL_PROCESSING_DIM || full_h > THUMBNAIL_PROCESSING_DIM {
                     let base =
-                        base_image.thumbnail(THUMBNAIL_PROCESSING_DIM, THUMBNAIL_PROCESSING_DIM);
+                        coarse_rotated_image.thumbnail(THUMBNAIL_PROCESSING_DIM, THUMBNAIL_PROCESSING_DIM);
                     let scale = if full_w > 0 {
                         base.width() as f32 / full_w as f32
                     } else {
@@ -405,7 +424,7 @@ pub fn generate_thumbnail_data(
                     };
                     (base, scale)
                 } else {
-                    (base_image.clone(), 1.0)
+                    (coarse_rotated_image.clone(), 1.0)
                 };
 
             let rotation_degrees = meta.adjustments["rotation"].as_f64().unwrap_or(0.0) as f32;
@@ -473,7 +492,8 @@ pub fn generate_thumbnail_data(
         }
     }
 
-    Ok(base_image)
+    let fallback_orientation_steps = adjustments["orientationSteps"].as_u64().unwrap_or(0) as u8;
+    Ok(apply_coarse_rotation(base_image, fallback_orientation_steps))
 }
 
 fn encode_thumbnail(image: &DynamicImage) -> Result<Vec<u8>> {
@@ -1036,6 +1056,46 @@ pub fn apply_auto_adjustments_to_paths(
 }
 
 #[tauri::command]
+pub fn set_color_label_for_paths(
+    paths: Vec<String>,
+    color: Option<String>,
+) -> Result<(), String> {
+    paths.par_iter().for_each(|path| {
+        let sidecar_path = get_sidecar_path(path);
+
+        let mut metadata: ImageMetadata = if sidecar_path.exists() {
+            fs::read_to_string(&sidecar_path)
+                .ok()
+                .and_then(|content| serde_json::from_str(&content).ok())
+                .unwrap_or_default()
+        } else {
+            ImageMetadata::default()
+        };
+
+        let mut tags = metadata.tags.unwrap_or_else(Vec::new);
+        tags.retain(|tag| !tag.starts_with(COLOR_TAG_PREFIX));
+
+        if let Some(c) = &color {
+            if !c.is_empty() {
+                tags.push(format!("{}{}", COLOR_TAG_PREFIX, c));
+            }
+        }
+
+        if tags.is_empty() {
+            metadata.tags = None;
+        } else {
+            metadata.tags = Some(tags);
+        }
+
+        if let Ok(json_string) = serde_json::to_string_pretty(&metadata) {
+            let _ = std::fs::write(sidecar_path, json_string);
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
 pub fn load_metadata(path: String) -> Result<ImageMetadata, String> {
     let sidecar_path = get_sidecar_path(&path);
     if sidecar_path.exists() {
@@ -1308,7 +1368,9 @@ pub fn delete_files_with_associated(paths: Vec<String>) -> Result<(), String> {
     for path in final_paths_to_delete {
         let sidecar_path = get_sidecar_path(&path);
         if sidecar_path.exists() {
-            let _ = trash::delete(&sidecar_path);
+            if let Err(e) = trash::delete(&sidecar_path) {
+                eprintln!("Failed to delete sidecar {}: {}", sidecar_path.display(), e);
+            }
         }
     }
 
@@ -1384,4 +1446,201 @@ pub fn get_cached_or_generate_thumbnail_image(
     } else {
         generate_thumbnail_data(path_str, gpu_context, None)
     }
+}
+
+#[tauri::command]
+pub async fn import_files(
+    source_paths: Vec<String>,
+    destination_folder: String,
+    settings: ImportSettings,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    let total_files = source_paths.len();
+    let _ = app_handle.emit(
+        "import-start",
+        serde_json::json!({ "total": total_files }),
+    );
+
+    tokio::spawn(async move {
+        for (i, source_path_str) in source_paths.iter().enumerate() {
+            let _ = app_handle.emit(
+                "import-progress",
+                serde_json::json!({ "current": i, "total": total_files, "path": source_path_str }),
+            );
+
+            let import_result: Result<(), String> = (|| {
+                let source_path = Path::new(source_path_str);
+                if !source_path.exists() {
+                    return Err(format!("Source file not found: {}", source_path_str));
+                }
+
+                let file_date: DateTime<Utc> = Metadata::new_from_path(source_path)
+                    .ok()
+                    .and_then(|metadata| {
+                        metadata
+                            .get_tag(&ExifTag::DateTimeOriginal("".to_string()))
+                            .next()
+                            .and_then(|tag| {
+                                if let &ExifTag::DateTimeOriginal(ref dt_str) = tag {
+                                    chrono::NaiveDateTime::parse_from_str(dt_str, "%Y:%m:%d %H:%M:%S")
+                                        .ok()
+                                        .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
+                                } else {
+                                    None
+                                }
+                            })
+                    })
+                    .unwrap_or_else(|| {
+                        fs::metadata(source_path)
+                            .ok()
+                            .and_then(|m| m.created().ok())
+                            .map(DateTime::<Utc>::from)
+                            .unwrap_or_else(Utc::now)
+                    });
+
+                let mut final_dest_folder = PathBuf::from(&destination_folder);
+                if settings.organize_by_date {
+                    let date_format_str = settings.date_folder_format
+                        .replace("YYYY", "%Y")
+                        .replace("MM", "%m")
+                        .replace("DD", "%d");
+                    let subfolder = file_date.format(&date_format_str).to_string();
+                    final_dest_folder.push(subfolder);
+                }
+
+                fs::create_dir_all(&final_dest_folder).map_err(|e| format!("Failed to create destination folder: {}", e))?;
+
+                let new_stem = generate_filename_from_template(&settings.filename_template, source_path, i + 1, total_files, &file_date);
+                let extension = source_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                let new_filename = format!("{}.{}", new_stem, extension);
+                let dest_file_path = final_dest_folder.join(new_filename);
+
+                if dest_file_path.exists() {
+                    return Err(format!("File already exists at destination: {}", dest_file_path.display()));
+                }
+
+                fs::copy(source_path, &dest_file_path).map_err(|e| e.to_string())?;
+                let source_sidecar = get_sidecar_path(source_path_str);
+                if source_sidecar.exists() {
+                    if let Some(dest_str) = dest_file_path.to_str() {
+                        let dest_sidecar = get_sidecar_path(dest_str);
+                        fs::copy(&source_sidecar, &dest_sidecar).map_err(|e| e.to_string())?;
+                    }
+                }
+
+                if settings.delete_after_import {
+                    trash::delete(source_path).map_err(|e| e.to_string())?;
+                    if source_sidecar.exists() {
+                        trash::delete(source_sidecar).map_err(|e| e.to_string())?;
+                    }
+                }
+
+                Ok(())
+            })();
+
+            if let Err(e) = import_result {
+                eprintln!("Failed to import {}: {}", source_path_str, e);
+                let _ = app_handle.emit("import-error", e);
+                return;
+            }
+        }
+
+        let _ = app_handle.emit(
+            "import-progress",
+            serde_json::json!({ "current": total_files, "total": total_files, "path": "" }),
+        );
+        let _ = app_handle.emit("import-complete", ());
+    });
+
+    Ok(())
+}
+
+pub fn generate_filename_from_template(
+    template: &str,
+    original_path: &std::path::Path,
+    sequence: usize,
+    total: usize,
+    file_date: &DateTime<Utc>,
+) -> String {
+    let stem = original_path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+    let sequence_str = format!("{:0width$}", sequence, width = total.to_string().len().max(1));
+    let local_date = file_date.with_timezone(&chrono::Local);
+
+    let mut result = template.to_string();
+    result = result.replace("{original_filename}", stem);
+    result = result.replace("{sequence}", &sequence_str);
+    result = result.replace("{YYYY}", &local_date.format("%Y").to_string());
+    result = result.replace("{MM}", &local_date.format("%m").to_string());
+    result = result.replace("{DD}", &local_date.format("%d").to_string());
+    result = result.replace("{hh}", &local_date.format("%H").to_string());
+    result = result.replace("{mm}", &local_date.format("%M").to_string());
+
+    result
+}
+
+#[tauri::command]
+pub fn rename_files(paths: Vec<String>, name_template: String) -> Result<Vec<String>, String> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut new_paths = Vec::with_capacity(paths.len());
+    let mut operations: Vec<(PathBuf, PathBuf)> = Vec::new();
+
+    for (i, path_str) in paths.iter().enumerate() {
+        let original_path = Path::new(path_str);
+        if !original_path.exists() {
+            return Err(format!("File not found: {}", path_str));
+        }
+
+        let parent = original_path.parent().ok_or("Could not get parent directory")?;
+        let extension = original_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+
+        let file_date: DateTime<Utc> = Metadata::new_from_path(original_path)
+            .ok()
+            .and_then(|metadata| {
+                metadata
+                    .get_tag(&ExifTag::DateTimeOriginal("".to_string()))
+                    .next()
+                    .and_then(|tag| {
+                        if let &ExifTag::DateTimeOriginal(ref dt_str) = tag {
+                            chrono::NaiveDateTime::parse_from_str(dt_str, "%Y:%m:%d %H:%M:%S")
+                                .ok()
+                                .map(|dt| DateTime::from_naive_utc_and_offset(dt, Utc))
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .unwrap_or_else(|| {
+                fs::metadata(original_path)
+                    .ok()
+                    .and_then(|m| m.created().ok())
+                    .map(DateTime::<Utc>::from)
+                    .unwrap_or_else(Utc::now)
+            });
+
+        let new_stem = generate_filename_from_template(&name_template, original_path, i + 1, paths.len(), &file_date);
+        let new_filename = format!("{}.{}", new_stem, extension);
+        let new_path = parent.join(new_filename);
+
+        if new_path.exists() && new_path != original_path {
+            return Err(format!("A file with the name {} already exists.", new_path.display()));
+        }
+
+        operations.push((original_path.to_path_buf(), new_path));
+    }
+
+    for (original_path, new_path) in operations {
+        fs::rename(&original_path, &new_path).map_err(|e| e.to_string())?;
+
+        let original_sidecar = get_sidecar_path(original_path.to_str().unwrap());
+        if original_sidecar.exists() {
+            let new_sidecar = get_sidecar_path(new_path.to_str().unwrap());
+            fs::rename(original_sidecar, new_sidecar).map_err(|e| e.to_string())?;
+        }
+        new_paths.push(new_path.to_string_lossy().into_owned());
+    }
+
+    Ok(new_paths)
 }

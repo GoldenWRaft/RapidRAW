@@ -175,6 +175,10 @@ export default function PresetsPanel({ adjustments, setAdjustments, selectedImag
   const [deletingItemId, setDeletingItemId] = useState(null);
   const previewsRef = useRef(previews);
   previewsRef.current = previews;
+  const expandedFoldersRef = useRef(expandedFolders);
+  expandedFoldersRef.current = expandedFolders;
+  const previewQueue = useRef([]);
+  const isProcessingQueue = useRef(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -211,6 +215,50 @@ export default function PresetsPanel({ adjustments, setAdjustments, selectedImag
     });
     return map;
   }, [presets]);
+
+  const processPreviewQueue = useCallback(async () => {
+    if (isProcessingQueue.current || previewQueue.current.length === 0) {
+      return;
+    }
+
+    isProcessingQueue.current = true;
+    setIsGeneratingPreviews(true);
+
+    while (previewQueue.current.length > 0) {
+      const { preset, folderId } = previewQueue.current.shift();
+
+      if (folderId && !expandedFoldersRef.current.has(folderId)) {
+        continue;
+      }
+
+      if (previewsRef.current[preset.id]) {
+        continue;
+      }
+
+      try {
+        const fullPresetAdjustments = { ...INITIAL_ADJUSTMENTS, ...preset.adjustments };
+        const previewUrl = await invoke('generate_preset_preview', { jsAdjustments: fullPresetAdjustments });
+        setPreviews(prev => ({ ...prev, [preset.id]: previewUrl }));
+      } catch (error) {
+        console.error(`Failed to generate preview for preset ${preset.name}:`, error);
+        setPreviews(prev => ({ ...prev, [preset.id]: null }));
+      }
+    }
+
+    isProcessingQueue.current = false;
+    setIsGeneratingPreviews(false);
+  }, []);
+
+  const enqueuePreviews = useCallback((presetsToGenerate, folderId = null) => {
+    const newItems = presetsToGenerate
+      .filter(p => !previewsRef.current[p.id])
+      .map(p => ({ preset: p, folderId }));
+      
+    if (newItems.length > 0) {
+      previewQueue.current.push(...newItems);
+      processPreviewQueue();
+    }
+  }, [processPreviewQueue]);
 
   const toggleFolder = (folderId) => {
     setExpandedFolders(prev => {
@@ -250,31 +298,12 @@ export default function PresetsPanel({ adjustments, setAdjustments, selectedImag
     if (!folder?.folder?.children?.length) return;
 
     const presetsToGenerate = folder.folder.children.filter(p => !previewsRef.current[p.id]);
-    if (presetsToGenerate.length === 0) {
-      setFolderPreviewsGenerated(prev => new Set(prev).add(folderId));
-      return;
+    if (presetsToGenerate.length > 0) {
+      enqueuePreviews(presetsToGenerate, folderId);
     }
-
-    setIsGeneratingPreviews(true);
-    try {
-      const newPreviews = {};
-      await Promise.all(presetsToGenerate.map(async (preset) => {
-        try {
-          const fullPresetAdjustments = { ...INITIAL_ADJUSTMENTS, ...preset.adjustments };
-          const previewUrl = await invoke('generate_preset_preview', { jsAdjustments: fullPresetAdjustments });
-          newPreviews[preset.id] = previewUrl;
-        } catch (error) {
-          console.error(`Failed to generate preview for preset ${preset.name}:`, error);
-          newPreviews[preset.id] = null;
-        }
-      }));
-
-      setPreviews(prev => ({ ...prev, ...newPreviews }));
-      setFolderPreviewsGenerated(prev => new Set(prev).add(folderId));
-    } finally {
-      setIsGeneratingPreviews(false);
-    }
-  }, [selectedImage?.isReady, presets]);
+    
+    setFolderPreviewsGenerated(prev => new Set(prev).add(folderId));
+  }, [selectedImage?.isReady, presets, enqueuePreviews]);
 
   const generateRootPreviews = useCallback(async () => {
     if (!selectedImage?.isReady) return;
@@ -282,26 +311,10 @@ export default function PresetsPanel({ adjustments, setAdjustments, selectedImag
     const rootPresets = presets.filter(item => item.preset).map(item => item.preset);
     const presetsToGenerate = rootPresets.filter(p => !previewsRef.current[p.id]);
 
-    if (presetsToGenerate.length === 0) return;
-
-    setIsGeneratingPreviews(true);
-    try {
-      const newPreviews = {};
-      await Promise.all(presetsToGenerate.map(async (preset) => {
-        try {
-          const fullPresetAdjustments = { ...INITIAL_ADJUSTMENTS, ...preset.adjustments };
-          const previewUrl = await invoke('generate_preset_preview', { jsAdjustments: fullPresetAdjustments });
-          newPreviews[preset.id] = previewUrl;
-        } catch (error) {
-          console.error(`Failed to generate preview for preset ${preset.name}:`, error);
-          newPreviews[preset.id] = null;
-        }
-      }));
-      setPreviews(prev => ({ ...prev, ...newPreviews }));
-    } finally {
-      setIsGeneratingPreviews(false);
+    if (presetsToGenerate.length > 0) {
+      enqueuePreviews(presetsToGenerate);
     }
-  }, [selectedImage?.isReady, presets]);
+  }, [selectedImage?.isReady, presets, enqueuePreviews]);
 
   useEffect(() => {
     if (activePanel === 'presets' && selectedImage?.isReady && presets.length > 0) {
@@ -312,6 +325,7 @@ export default function PresetsPanel({ adjustments, setAdjustments, selectedImag
     } else if (!selectedImage?.isReady) {
       setPreviews({});
       setFolderPreviewsGenerated(new Set());
+      previewQueue.current = [];
     }
   }, [activePanel, selectedImage?.isReady, presets.length, generateRootPreviews, generateFolderPreviews, expandedFolders]);
 

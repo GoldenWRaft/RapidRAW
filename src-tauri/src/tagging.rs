@@ -17,8 +17,10 @@ use crate::formats::is_supported_image_file;
 use crate::image_processing::ImageMetadata;
 use crate::file_management::{self, get_sidecar_path};
 use crate::AppState;
-use crate::tag_candidates::TAG_CANDIDATES;
-use crate::tag_hierarchy::TAG_HIERARCHY;
+use crate::candidates::TAG_CANDIDATES;
+use crate::hierarchy::TAG_HIERARCHY;
+
+pub const COLOR_TAG_PREFIX: &str = "color:";
 
 fn preprocess_clip_image(image: &DynamicImage) -> Array<f32, ndarray::Dim<[usize; 4]>> {
     let input_size = 224;
@@ -345,11 +347,18 @@ pub fn clear_all_tags(root_path: String) -> Result<usize, String> {
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("rrdata") {
             if let Ok(content) = fs::read_to_string(path) {
                 if let Ok(mut metadata) = serde_json::from_str::<ImageMetadata>(&content) {
-                    if metadata.tags.is_some() {
-                        metadata.tags = None;
-                        if let Ok(json_string) = serde_json::to_string_pretty(&metadata) {
-                            if fs::write(path, json_string).is_ok() {
-                                updated_count += 1;
+                    if let Some(tags) = &mut metadata.tags {
+                        let original_len = tags.len();
+                        tags.retain(|tag| tag.starts_with(COLOR_TAG_PREFIX)); // don't remove color tags, just AI tags
+                        
+                        if tags.len() < original_len {
+                            if tags.is_empty() {
+                                metadata.tags = None;
+                            }
+                            if let Ok(json_string) = serde_json::to_string_pretty(&metadata) {
+                                if fs::write(path, json_string).is_ok() {
+                                    updated_count += 1;
+                                }
                             }
                         }
                     }

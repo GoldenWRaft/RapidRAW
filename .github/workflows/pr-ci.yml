@@ -37,7 +37,7 @@ jobs:
             asset-prefix: '01'
           - platform: 'windows-11-arm'
             builds-args: '--bundles nsis'
-            target: ''
+            target: 'aarch64-pc-windows-msvc'
             asset-prefix: '01'
           - platform: 'macos-13'
             target: aarch64-apple-darwin

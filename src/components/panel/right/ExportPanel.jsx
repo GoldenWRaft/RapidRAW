@@ -83,7 +83,7 @@ export default function ExportPanel({ selectedImage, adjustments, multiSelectedP
     setExportState({ status: 'exporting', progress: { current: 0, total: numImages }, errorMessage: '' });
 
     let finalFilenameTemplate = filenameTemplate;
-    if (isBatchMode && !filenameTemplate.includes('{sequence}')) {
+    if (isBatchMode && !filenameTemplate.includes('{sequence}') && !filenameTemplate.includes('{original_filename}')) {
       finalFilenameTemplate = `${filenameTemplate}_{sequence}`;
       setFilenameTemplate(finalFilenameTemplate);
     }

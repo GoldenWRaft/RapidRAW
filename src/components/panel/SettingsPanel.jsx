@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowLeft, Trash2, Wifi, WifiOff } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
@@ -30,6 +30,41 @@ const KeybindItem = ({ keys, description }) => (
   </div>
 );
 
+const SettingItem = ({ label, description, children }) => (
+  <div className="pb-6 border-b border-border-color last:border-b-0 last:pb-0">
+    <label className="block text-sm font-medium text-text-primary mb-2">
+      {label}
+    </label>
+    {children}
+    {description && (
+      <p className="text-xs text-text-secondary mt-2">
+        {description}
+      </p>
+    )}
+  </div>
+);
+
+const DataActionItem = ({ title, description, buttonText, buttonAction, isProcessing, message, icon, disabled = false }) => (
+  <div className="pb-6 border-b border-border-color last:border-b-0 last:pb-0">
+    <h3 className="font-medium text-text-primary mb-1">{title}</h3>
+    <p className="text-xs text-text-secondary mb-3">
+      {description}
+    </p>
+    <Button
+      variant="destructive"
+      onClick={buttonAction}
+      disabled={isProcessing || disabled}
+    >
+      {icon}
+      {isProcessing ? 'Processing...' : buttonText}
+    </Button>
+    {message && (
+      <p className="text-sm text-accent mt-3">{message}</p>
+    )}
+  </div>
+);
+
+
 export default function SettingsPanel({ onBack, appSettings, onSettingsChange, rootPath, onLibraryRefresh }) {
   const [isClearing, setIsClearing] = useState(false);
   const [clearMessage, setClearMessage] = useState('');
@@ -54,6 +89,14 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
     message: '',
     success: null,
   });
+
+  const [comfyUiAddress, setComfyUiAddress] = useState(appSettings?.comfyuiAddress || '');
+
+  useEffect(() => {
+    if (appSettings?.comfyuiAddress !== comfyUiAddress) {
+      setComfyUiAddress(appSettings?.comfyuiAddress || '');
+    }
+  }, [appSettings?.comfyuiAddress]);
 
   const effectiveRootPath = rootPath || appSettings?.lastRootPath;
 
@@ -161,10 +204,10 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
   };
 
   const handleTestConnection = async () => {
-    if (!appSettings?.comfyuiAddress) return;
+    if (!comfyUiAddress) return;
     setTestStatus({ testing: true, message: 'Testing...', success: null });
     try {
-      await invoke('test_comfyui_connection', { address: appSettings.comfyuiAddress });
+      await invoke('test_comfyui_connection', { address: comfyUiAddress });
       setTestStatus({ testing: false, message: 'Connection successful!', success: true });
     } catch (err) {
       setTestStatus({ testing: false, message: `Connection failed.`, success: false });
@@ -177,40 +220,6 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
   const closeConfirmModal = () => {
     setConfirmModalState({ ...confirmModalState, isOpen: false });
   };
-
-  const SettingItem = ({ label, description, children }) => (
-    <div className="pb-6 border-b border-border-color last:border-b-0 last:pb-0">
-      <label className="block text-sm font-medium text-text-primary mb-2">
-        {label}
-      </label>
-      {children}
-      {description && (
-        <p className="text-xs text-text-secondary mt-2">
-          {description}
-        </p>
-      )}
-    </div>
-  );
-
-  const DataActionItem = ({ title, description, buttonText, buttonAction, isProcessing, message, icon, disabled = false }) => (
-    <div className="pb-6 border-b border-border-color last:border-b-0 last:pb-0">
-      <h3 className="font-medium text-text-primary mb-1">{title}</h3>
-      <p className="text-xs text-text-secondary mb-3">
-        {description}
-      </p>
-      <Button
-        variant="destructive"
-        onClick={buttonAction}
-        disabled={isProcessing || disabled}
-      >
-        {icon}
-        {isProcessing ? 'Processing...' : buttonText}
-      </Button>
-      {message && (
-        <p className="text-sm text-accent mt-3">{message}</p>
-      )}
-    </div>
-  );
 
   return (
     <>
@@ -227,7 +236,6 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
         </header>
         <div className="flex-1 overflow-y-auto pr-2 -mr-2 space-y-8 custom-scrollbar">
           
-          {/* General Settings */}
           <div className="p-6 bg-surface rounded-xl shadow-md">
             <h2 className="text-xl font-semibold mb-6 text-accent">General Settings</h2>
             <div className="space-y-6">
@@ -291,7 +299,6 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
             </div>
           </div>
 
-          {/* Integrations */}
           <div className="p-6 bg-surface rounded-xl shadow-md">
             <h2 className="text-xl font-semibold mb-6 text-accent">Integrations</h2>
             <div className="space-y-6">
@@ -304,13 +311,15 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
                     id="comfyui-address"
                     type="text"
                     placeholder="127.0.0.1:8188"
-                    value={appSettings?.comfyuiAddress || ''}
-                    onChange={(e) => onSettingsChange({ ...appSettings, comfyuiAddress: e.target.value })}
+                    value={comfyUiAddress}
+                    onChange={(e) => setComfyUiAddress(e.target.value)}
+                    onBlur={() => onSettingsChange({ ...appSettings, comfyuiAddress: comfyUiAddress })}
+                    onKeyDown={(e) => e.stopPropagation()}
                     className="flex-grow"
                   />
                   <Button
                     onClick={handleTestConnection}
-                    disabled={testStatus.testing || !appSettings?.comfyuiAddress}
+                    disabled={testStatus.testing || !comfyUiAddress}
                     className="w-32"
                   >
                     {testStatus.testing ? 'Testing...' : 'Test'}
@@ -327,7 +336,6 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
             </div>
           </div>
 
-          {/* Data Management */}
           <div className="p-6 bg-surface rounded-xl shadow-md">
             <h2 className="text-xl font-semibold mb-6 text-accent">Data Management</h2>
             <div className="space-y-6">
@@ -372,7 +380,6 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
             </div>
           </div>
 
-          {/* Keyboard Shortcuts */}
           <div className="p-6 bg-surface rounded-xl shadow-md">
             <h2 className="text-xl font-semibold mb-6 text-accent">Keyboard Shortcuts</h2>
             <div className="space-y-4">
@@ -385,7 +392,8 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
                   <KeybindItem keys={['Ctrl/Cmd', '+', 'Shift', '+', 'V']} description="Paste file(s) to current folder" />
                   <KeybindItem keys={['Ctrl/Cmd', '+', 'A']} description="Select all images" />
                   <KeybindItem keys={['Delete']} description="Delete selected file(s)" />
-                  <KeybindItem keys={['0-5']} description="Set rating for selected image(s)" />
+                  <KeybindItem keys={['0-5']} description="Set star rating for selected image(s)" />
+                  <KeybindItem keys={['Shift', '+', '0-5']} description="Set color label for selected image(s)" />
                   <KeybindItem keys={['↑', '↓', '←', '→']} description="Navigate images in library" />
                 </div>
               </div>
@@ -410,7 +418,6 @@ export default function SettingsPanel({ onBack, appSettings, onSettingsChange, r
             </div>
           </div>
 
-          {/* Information */}
           <div className="p-6 bg-surface rounded-xl shadow-md">
             <h2 className="text-xl font-semibold mb-4 text-accent">Information</h2>
             {appSettings?.lastRootPath ? (

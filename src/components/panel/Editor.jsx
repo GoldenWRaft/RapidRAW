@@ -22,7 +22,7 @@ export default function Editor({
   onSelectMask, onSelectAiSubMask, updateSubMask, transformWrapperRef, onZoomed, onContextMenu,
   onUndo, onRedo, canUndo, canRedo, brushSettings,
   onGenerateAiMask, isMaskControlHovered,
-  targetZoom, waveform, isWaveformVisible, onCloseWaveform,
+  targetZoom, waveform, isWaveformVisible, onCloseWaveform, onToggleWaveform, isStraightenActive, onStraighten,
 }) {
   const [crop, setCrop] = useState();
   const prevCropParams = useRef(null);
@@ -81,14 +81,14 @@ export default function Editor({
         return { width: adjustments.crop.width, height: adjustments.crop.height };
     }
     if (selectedImage) {
-        const rotation = adjustments.rotation || 0;
-        const isSwapped = Math.abs(rotation % 180) === 90;
+        const orientationSteps = adjustments.orientationSteps || 0;
+        const isSwapped = orientationSteps === 1 || orientationSteps === 3;
         const width = isSwapped ? selectedImage.height : selectedImage.width;
         const height = isSwapped ? selectedImage.width : selectedImage.height;
         return { width, height };
     }
     return null;
-  }, [selectedImage, adjustments.crop, adjustments.rotation]);
+  }, [selectedImage, adjustments.crop, adjustments.orientationSteps]);
 
   const imageRenderSize = useImageRenderSize(imageContainerRef, croppedDimensions);
 
@@ -149,39 +149,42 @@ export default function Editor({
     if (!isCropping || !selectedImage?.width) {
       return;
     }
-
-    const { rotation = 0, aspectRatio } = adjustments;
-    
-    const hasChanged = prevCropParams.current?.rotation !== rotation || prevCropParams.current?.aspectRatio !== aspectRatio;
-
-    if (hasChanged) {
+  
+    const { rotation = 0, aspectRatio, orientationSteps = 0, crop } = adjustments;
+    const needsRecalc = crop === null ||
+      prevCropParams.current?.rotation !== rotation ||
+      prevCropParams.current?.aspectRatio !== aspectRatio ||
+      prevCropParams.current?.orientationSteps !== orientationSteps;
+  
+    if (needsRecalc) {
       const { width: imgWidth, height: imgHeight } = selectedImage;
-      const isSwapped = Math.abs(rotation % 180) === 90;
+      const isSwapped = orientationSteps === 1 || orientationSteps === 3;
       const W = isSwapped ? imgHeight : imgWidth;
       const H = isSwapped ? imgWidth : imgHeight;
       const A = aspectRatio || W / H;
-      if (isNaN(A)) return;
-
+      if (isNaN(A) || A <= 0) return;
+  
       const angle = Math.abs(rotation);
       const rad = (angle % 180) * Math.PI / 180;
       const sin = Math.sin(rad);
       const cos = Math.cos(rad);
-
+  
       const h_c = Math.min(H / (A * sin + cos), W / (A * cos + sin));
       const w_c = A * h_c;
-
+  
       const maxPixelCrop = {
         x: Math.round((W - w_c) / 2),
         y: Math.round((H - h_c) / 2),
         width: Math.round(w_c),
         height: Math.round(h_c),
       };
-      
-      prevCropParams.current = { rotation, aspectRatio };
-      setAdjustments(prev => ({ ...prev, crop: maxPixelCrop }));
+  
+      prevCropParams.current = { rotation, aspectRatio, orientationSteps };
+      if (JSON.stringify(crop) !== JSON.stringify(maxPixelCrop)) {
+        setAdjustments(prev => ({ ...prev, crop: maxPixelCrop }));
+      }
     }
-  }, [isCropping, adjustments.rotation, adjustments.aspectRatio, selectedImage?.width, selectedImage?.height, setAdjustments]);
-
+  }, [isCropping, adjustments.rotation, adjustments.aspectRatio, adjustments.orientationSteps, adjustments.crop, selectedImage, setAdjustments]);
 
   useEffect(() => {
     if (!isCropping || !selectedImage?.width) {
@@ -189,8 +192,8 @@ export default function Editor({
       return;
     }
     
-    const rotation = adjustments.rotation || 0;
-    const isSwapped = Math.abs(rotation % 180) === 90;
+    const orientationSteps = adjustments.orientationSteps || 0;
+    const isSwapped = orientationSteps === 1 || orientationSteps === 3;
     const cropBaseWidth = isSwapped ? selectedImage.height : selectedImage.width;
     const cropBaseHeight = isSwapped ? selectedImage.width : selectedImage.height;
 
@@ -204,10 +207,8 @@ export default function Editor({
         width: (pixelCrop.width / cropBaseWidth) * 100,
         height: (pixelCrop.height / cropBaseHeight) * 100,
       });
-    } else {
-      setCrop({ unit: '%', width: 100, height: 100, x: 0, y: 0 });
     }
-  }, [isCropping, adjustments.crop, selectedImage]);
+  }, [isCropping, adjustments.crop, adjustments.orientationSteps, selectedImage]);
 
   const handleCropChange = useCallback((pixelCrop, percentCrop) => {
     setCrop(percentCrop);
@@ -216,8 +217,8 @@ export default function Editor({
   const handleCropComplete = useCallback((_, pc) => {
     if (!pc.width || !pc.height || !selectedImage?.width) return;
 
-    const rotation = adjustments.rotation || 0;
-    const isSwapped = Math.abs(rotation % 180) === 90;
+    const orientationSteps = adjustments.orientationSteps || 0;
+    const isSwapped = orientationSteps === 1 || orientationSteps === 3;
     
     const cropBaseWidth = isSwapped ? selectedImage.height : selectedImage.width;
     const cropBaseHeight = isSwapped ? selectedImage.width : selectedImage.height;
@@ -232,7 +233,7 @@ export default function Editor({
     if (JSON.stringify(newPixelCrop) !== JSON.stringify(adjustments.crop)) {
       setAdjustments(prev => ({ ...prev, crop: newPixelCrop }));
     }
-  }, [selectedImage, adjustments.crop, adjustments.rotation, setAdjustments]);
+  }, [selectedImage, adjustments.crop, adjustments.orientationSteps, setAdjustments]);
 
   const toggleShowOriginal = useCallback(() => setShowOriginal(prev => !prev), [setShowOriginal]);
 
@@ -298,6 +299,8 @@ export default function Editor({
           onRedo={onRedo}
           canUndo={canUndo}
           canRedo={canRedo}
+          isWaveformVisible={isWaveformVisible}
+          onToggleWaveform={onToggleWaveform}
         />
 
         <div 
@@ -356,6 +359,8 @@ export default function Editor({
                 activeAiPatchContainerId={activeAiPatchContainerId}
                 activeAiSubMaskId={activeAiSubMaskId}
                 onSelectAiSubMask={onSelectAiSubMask}
+                isStraightenActive={isStraightenActive}
+                onStraighten={onStraighten}
               />
             </TransformComponent>
           </TransformWrapper>
