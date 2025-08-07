@@ -1790,6 +1790,7 @@ const handleSetColorLabel = useCallback(async (color, paths) => {
                     >
                       {/* The content is still determined by renderedRightPanel */}
                       {renderedRightPanel === 'adjustments' && <Controls theme={theme} adjustments={adjustments} setAdjustments={setAdjustments} selectedImage={selectedImage} histogram={histogram} collapsibleState={collapsibleSectionsState} setCollapsibleState={setCollapsibleSectionsState} copiedSectionAdjustments={copiedSectionAdjustments} setCopiedSectionAdjustments={setCopiedSectionAdjustments} handleAutoAdjustments={handleAutoAdjustments} />}
+                      {renderedRightPanel === 'lut' && <LutPanel selectedImage={selectedImage} activePanel={activeRightPanel} rootPath={rootPath} setFinalPreviewUrl={handleAppliedLutImage} /> }
                       {renderedRightPanel === 'metadata' && <MetadataPanel selectedImage={selectedImage} />}
                       {renderedRightPanel === 'crop' && <CropPanel selectedImage={selectedImage} adjustments={adjustments} setAdjustments={setAdjustments} isStraightenActive={isStraightenActive} setIsStraightenActive={setIsStraightenActive} />}
                       {renderedRightPanel === 'masks' && <MasksPanel adjustments={adjustments} setAdjustments={setAdjustments} selectedImage={selectedImage} onSelectMask={setActiveMaskId} activeMaskId={activeMaskId} activeMaskContainerId={activeMaskContainerId} onSelectContainer={setActiveMaskContainerId} brushSettings={brushSettings} setBrushSettings={setBrushSettings} copiedMask={copiedMask} setCopiedMask={setCopiedMask} setCustomEscapeHandler={setCustomEscapeHandler} histogram={histogram} isGeneratingAiMask={isGeneratingAiMask} aiModelDownloadStatus={aiModelDownloadStatus} onGenerateAiForegroundMask={handleGenerateAiForegroundMask} setIsMaskControlHovered={setIsMaskControlHovered} />}
@@ -1800,13 +1801,6 @@ const handleSetColorLabel = useCallback(async (color, paths) => {
                   )}
                 </AnimatePresence>
                 {/* --- MODIFICATION END --- */}
-                { renderedRightPanel === 'lut' && <LutPanel
-                    selectedImage={selectedImage}
-                    activePanel={activeRightPanel}
-                    rootPath={rootPath}
-                    setFinalPreviewUrl={handleAppliedLutImage}
-                  />
-                }
               </div>
             </div>
             <div className={clsx('h-full border-l transition-colors', activeRightPanel ? 'border-surface' : 'border-transparent')}>

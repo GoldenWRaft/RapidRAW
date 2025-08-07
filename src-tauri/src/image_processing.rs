@@ -593,11 +593,15 @@ impl GpuContext {
             force_fallback_adapter: false,
         }).await.ok_or("Failed to find a suitable GPU adapter")?;
 
+        let limits = adapter.limits();
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("RapidRAW Device"),
                 required_features: wgpu::Features::FLOAT32_FILTERABLE,
-                required_limits: wgpu::Limits::default(),
+                required_limits: wgpu::Limits {
+                    max_sampled_textures_per_shader_stage: limits.max_sampled_textures_per_shader_stage.max(32),
+                    ..limits
+                },
             },
             None,
         ).await.map_err(|e| format!("Failed to create device: {}", e))?;
