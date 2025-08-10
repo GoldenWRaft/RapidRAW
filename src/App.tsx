@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { homeDir } from '@tauri-apps/api/path';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import LutPanel from './components/panel/right/LutPanel';
 import debounce from 'lodash.debounce';
 import clsx from 'clsx';
 import {
@@ -1676,6 +1677,12 @@ function App() {
     }
   };
 
+    const handleAppliedLutImage = (imageUrl: string) => {
+    if (!selectedImage) return;
+    setSelectedImage((prev: SelectedImage | null) => ({ ...prev, originalUrl: imageUrl } as SelectedImage));
+    setFinalPreviewUrl(imageUrl);
+  }
+
   const handleContinueSession = () => {
     const restore = async () => {
       if (!appSettings?.lastRootPath) {
@@ -2571,6 +2578,15 @@ function App() {
                           theme={theme}
                         />
                       )}
+                      {
+                        renderedRightPanel === Panel.Lut && 
+                        <LutPanel 
+                          selectedImage={selectedImage} 
+                          activePanel={activeRightPanel} 
+                          rootPath={rootPath} 
+                          setFinalPreviewUrl={handleAppliedLutImage} 
+                        />
+                      }
                       {renderedRightPanel === Panel.Metadata && <MetadataPanel selectedImage={selectedImage} />}
                       {renderedRightPanel === Panel.Crop && (
                         <CropPanel

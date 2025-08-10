@@ -6,9 +6,9 @@ import { Plus, RefreshCw, Star, X } from 'lucide-react';
 import FolderTree from '../FolderTree';
 
 // Helper function to get the file name from a path
-const getLutNameFromPath = (path) => path.split(/[\\/]/).pop();
+const getLutNameFromPath = (path: string) => path.split(/[\\/]/).pop();
 
-export default function LutPanel({ rootPath, selectedImage, activePanel, setFinalPreviewUrl }) {
+export default function LutPanel({ rootPath, selectedImage, activePanel, setFinalPreviewUrl }: any) {
       /*
         Processing of luts (Breakdown)
         - Open folders with luts and save the location
@@ -29,15 +29,15 @@ export default function LutPanel({ rootPath, selectedImage, activePanel, setFina
     */
 
   // --- STATE MANAGEMENT ---
-  const [favoriteLuts, setFavoriteLuts] = useState([]); // Array of { path, name }
-  const [recentLuts, setRecentLuts] = useState([]);     // Array of { path, name }
+  const [favoriteLuts, setFavoriteLuts] = useState([] as any[]); // Array of { path, name }
+  const [recentLuts, setRecentLuts] = useState([] as any[]); // Array of { path, name }
   
-  const [selectedFolders, setSelectedFolders] = useState([]);
-  const [folderTrees, setFolderTrees] = useState({});
+  const [selectedFolders, setSelectedFolders] = useState([] as string[]); // Array of folder paths
+  const [folderTrees, setFolderTrees] = useState({} as Record<string, any>); // Map of folder path to tree data
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   
-  const [cachedImage, setCachedImage] = useState(null);
-  const [lutApplied, setLutApplied] = useState(null);
+  const [cachedImage, setCachedImage] = useState(null as string | null);
+  const [lutApplied, setLutApplied] = useState(null as { path: string, name: string | undefined } | null);
 
   const { showContextMenu } = useContextMenu();
 
@@ -70,7 +70,7 @@ useEffect(() => {
   // FIX: Effect to re-load file trees when selectedFolders are restored
   useEffect(() => {
     const loadTrees = async () => {
-      const newTrees = {};
+      const newTrees: any = {};
       for (const folderPath of selectedFolders) {
         try {
           // Check if tree data already exists to avoid redundant calls
@@ -100,22 +100,22 @@ useEffect(() => {
 
   // --- CORE LUT FUNCTIONALITY ---
 
-  const toggleFavorite = useCallback((lutItem) => {
-    setFavoriteLuts(prev =>
-      prev.find(f => f.path === lutItem.path)
-        ? prev.filter(f => f.path !== lutItem.path) // Remove
+  const toggleFavorite = useCallback((lutItem: any) => {
+    setFavoriteLuts((prev: any) =>
+      prev.find((f: any) => f.path === lutItem.path)
+        ? prev.filter((f: any) => f.path !== lutItem.path) // Remove
         : [lutItem, ...prev]                        // Add
     );
   }, []);
 
-  const addToRecent = useCallback((lutItem) => {
-    setRecentLuts(prev => {
-      const filtered = prev.filter(item => item.path !== lutItem.path);
+  const addToRecent = useCallback((lutItem: any) => {
+    setRecentLuts((prev: any) => {
+      const filtered = prev.filter((item: any) => item.path !== lutItem.path);
       return [lutItem, ...filtered].slice(0, 5); // Keep max 10 recents
     });
   }, []);
 
-  async function applyLut(lutPath) {
+  async function applyLut(lutPath: any) {
     if (lutApplied === null) {
       setCachedImage(selectedImage.originalUrl);
     }
@@ -165,7 +165,7 @@ useEffect(() => {
 
   // --- UI HANDLERS ---
 
-  const handleToggleFolder = useCallback((path) => {
+  const handleToggleFolder = useCallback((path: any) => {
     setExpandedFolders(prev => {
       const newSet = new Set(prev);
       newSet.has(path) ? newSet.delete(path) : newSet.add(path);
@@ -191,7 +191,7 @@ useEffect(() => {
     }
   }
   
-  function findNodeByPath(node, path) {
+  function findNodeByPath(node: any, path: string): any {
     if (!node) return null;
     if (node.path === path) return node;
     if (node.children) {
@@ -203,7 +203,7 @@ useEffect(() => {
     return null;
   }
 
-  const handleNodeClick = useCallback((path, is_dir) => {
+  const handleNodeClick = useCallback((path: string, is_dir: boolean) => {
     if (is_dir) {
       handleToggleFolder(path);
     } else {
@@ -211,7 +211,7 @@ useEffect(() => {
     }
   }, [handleToggleFolder, applyLut]);
   
-  const handleContextMenu = (event, path) => {
+  const handleContextMenu = (event: any, path: string) => {
     event.preventDefault();
 
     if (!folderTrees || Object.keys(folderTrees).length === 0) {
@@ -236,7 +236,7 @@ useEffect(() => {
     showContextMenu(event.clientX, event.clientY, menuOptions);
   };
 
-    const removeFolder = (folderPath) => {
+    const removeFolder = (folderPath: string) => {
     setSelectedFolders(prev => prev.filter(f => f !== folderPath));
     setFolderTrees(prev => {
         const newTrees = { ...prev };
