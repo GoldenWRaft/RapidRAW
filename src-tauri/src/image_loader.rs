@@ -1,6 +1,6 @@
 use anyhow::{Result, Context};
 use base64::{engine::general_purpose, Engine as _};
-use image::{imageops, DynamicImage, ImageReader, RgbaImage};
+use image::{imageops, DynamicImage, ImageReader, RgbaImage, Rgba};
 use rawler::Orientation;
 use std::io::Cursor;
 use rayon::prelude::*;
@@ -69,31 +69,58 @@ pub fn composite_patches_on_image(
         _ => return Ok(base_image.clone()),
     };
 
-    let visible_patches_b64: Vec<&str> = patches_arr
+    let visible_patches: Vec<&Value> = patches_arr
         .par_iter()
-        .filter_map(|patch_obj| {
+        .filter(|patch_obj| {
             let is_visible = patch_obj
                 .get("visible")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-            if is_visible {
-                patch_obj.get("patchDataBase64").and_then(|v| v.as_str())
-            } else {
-                None
-            }
+            
+            let has_data = patch_obj.get("patchData").is_some();
+
+            is_visible && has_data
         })
         .collect();
 
-    if visible_patches_b64.is_empty() {
+    if visible_patches.is_empty() {
         return Ok(base_image.clone());
     }
 
-    let patch_layers: Result<Vec<RgbaImage>> = visible_patches_b64
+    let patch_layers: Result<Vec<RgbaImage>> = visible_patches
         .par_iter()
-        .map(|&b64_data| {
-            let png_bytes = general_purpose::STANDARD.decode(b64_data)?;
-            let patch_layer = image::load_from_memory(&png_bytes)?;
-            Ok(patch_layer.to_rgba8())
+        .filter_map(|patch_obj| {
+            let patch_data = patch_obj.get("patchData")?;
+            
+            let color_b64 = patch_data.get("color").and_then(|v| v.as_str())?;
+            let mask_b64 = patch_data.get("mask").and_then(|v| v.as_str())?;
+
+            let result: Result<RgbaImage> = (|| {
+                let color_bytes = general_purpose::STANDARD.decode(color_b64)?;
+                let color_image = image::load_from_memory(&color_bytes)?.to_rgb8();
+
+                let mask_bytes = general_purpose::STANDARD.decode(mask_b64)?;
+                let mask_image = image::load_from_memory(&mask_bytes)?.to_luma8();
+
+                let (width, height) = color_image.dimensions();
+                let mut patch_rgba = RgbaImage::new(width, height);
+
+                for y in 0..height {
+                    for x in 0..width {
+                        let color_pixel = color_image.get_pixel(x, y);
+                        let mask_pixel = mask_image.get_pixel(x, y);
+                        patch_rgba.put_pixel(x, y, Rgba([
+                            color_pixel[0],
+                            color_pixel[1],
+                            color_pixel[2],
+                            mask_pixel[0],
+                        ]));
+                    }
+                }
+                Ok(patch_rgba)
+            })();
+
+            Some(result)
         })
         .collect();
 

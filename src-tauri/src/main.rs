@@ -14,6 +14,7 @@ mod tagging;
 mod tagging_utils;
 mod panorama_stitching;
 mod panorama_utils;
+mod inpainting;
 
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
@@ -23,7 +24,7 @@ use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
-use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Rgba, RgbaImage, ImageFormat, GrayImage, RgbImage};
+use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Rgb, Rgba, RgbaImage, ImageFormat, GrayImage, RgbImage};
 use image::codecs::jpeg::JpegEncoder;
 use imageproc::morphology::dilate;
 use imageproc::distance_transform::Norm as DilationNorm;
@@ -186,8 +187,16 @@ fn calculate_transform_hash(adjustments: &serde_json::Value) -> u64 {
                 let is_visible = patch.get("visible").and_then(|v| v.as_bool()).unwrap_or(true);
                 is_visible.hash(&mut hasher);
 
-                let data_len = patch.get("patchDataBase64").and_then(|v| v.as_str()).unwrap_or("").len();
-                data_len.hash(&mut hasher);
+                if let Some(patch_data) = patch.get("patchData") {
+                    let color_len = patch_data.get("color").and_then(|v| v.as_str()).unwrap_or("").len();
+                    color_len.hash(&mut hasher);
+
+                    let mask_len = patch_data.get("mask").and_then(|v| v.as_str()).unwrap_or("").len();
+                    mask_len.hash(&mut hasher);
+                } else {
+                    let data_len = patch.get("patchDataBase64").and_then(|v| v.as_str()).unwrap_or("").len();
+                    data_len.hash(&mut hasher);
+                }
 
                 if let Some(sub_masks_val) = patch.get("subMasks") {
                     sub_masks_val.to_string().hash(&mut hasher);
@@ -1071,17 +1080,31 @@ async fn test_comfyui_connection(address: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+fn calculate_dynamic_patch_radius(width: u32, height: u32) -> u32 {
+    const MIN_RADIUS: u32 = 2;
+    const MAX_RADIUS: u32 = 32;
+    const BASE_DIMENSION: f32 = 192.0;
+
+    let min_dim = width.min(height) as f32;
+    let scaled_radius = (min_dim / BASE_DIMENSION).round() as u32;
+    scaled_radius.clamp(MIN_RADIUS, MAX_RADIUS)
+}
+
 #[tauri::command]
 async fn invoke_generative_replace_with_mask_def(
     _path: String,
     patch_definition: AiPatchDefinition,
     current_adjustments: Value,
+    use_fast_inpaint: bool,
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
-    let settings = load_settings(app_handle).unwrap_or_default();
-    let address = settings.comfyui_address
-        .ok_or_else(|| "ComfyUI address is not configured in settings.".to_string())?;
+    let settings = load_settings(app_handle.clone()).unwrap_or_default();
+    let address = settings.comfyui_address;
+
+    if !use_fast_inpaint && address.is_none() {
+        return Err("ComfyUI address is not configured in settings.".to_string());
+    }
 
     let mut source_image_adjustments = current_adjustments.clone();
     if let Some(patches) = source_image_adjustments.get_mut("aiPatches").and_then(|v| v.as_array_mut()) {
@@ -1106,34 +1129,73 @@ async fn invoke_generative_replace_with_mask_def(
     let mask_bitmap = generate_mask_bitmap(&mask_def_for_generation, img_w, img_h, 1.0, (0.0, 0.0))
         .ok_or("Failed to generate mask bitmap for AI replace")?;
 
-    let dilation_amount_u32 = ((img_w.min(img_h) as f32 * 0.01).round() as u32).max(1);
-    let dilation_amount_u8 = std::cmp::min(dilation_amount_u32, 255) as u8;
-    let enlarged_mask_bitmap = dilate(&mask_bitmap, DilationNorm::LInf, dilation_amount_u8);
+    let patch_rgba = if use_fast_inpaint {
+        let patch_radius = calculate_dynamic_patch_radius(img_w, img_h);
+        inpainting::perform_fast_inpaint(&source_image, &mask_bitmap, patch_radius)?
+    } else {
+        let comfy_address = address.unwrap();
 
-    let mut rgba_mask = RgbaImage::new(img_w, img_h);
-    for (x, y, luma_pixel) in enlarged_mask_bitmap.enumerate_pixels() {
-        let intensity = luma_pixel[0];
-        rgba_mask.put_pixel(x, y, Rgba([255, 255, 255, intensity]));
-    }
-    let mask_image = DynamicImage::ImageRgba8(rgba_mask);
+        let dilation_amount_u32 = ((img_w.min(img_h) as f32 * 0.01).round() as u32).max(1);
+        let dilation_amount_u8 = std::cmp::min(dilation_amount_u32, 255) as u8;
+        let enlarged_mask_bitmap = dilate(&mask_bitmap, DilationNorm::LInf, dilation_amount_u8);
 
-    let workflow_inputs = comfyui_connector::WorkflowInputs {
-        source_image_node_id: "11".to_string(),
-        mask_image_node_id: Some("148".to_string()),
-        text_prompt_node_id: Some("6".to_string()),
-        final_output_node_id: "252".to_string(),
+        let mut rgba_mask = RgbaImage::new(img_w, img_h);
+        for (x, y, luma_pixel) in enlarged_mask_bitmap.enumerate_pixels() {
+            let intensity = luma_pixel[0];
+            rgba_mask.put_pixel(x, y, Rgba([255, 255, 255, intensity]));
+        }
+        let mask_image = DynamicImage::ImageRgba8(rgba_mask);
+
+        let workflow_inputs = comfyui_connector::WorkflowInputs {
+            source_image_node_id: "11".to_string(),
+            mask_image_node_id: Some("148".to_string()),
+            text_prompt_node_id: Some("6".to_string()),
+            final_output_node_id: "252".to_string(),
+        };
+
+        let result_png_bytes = comfyui_connector::execute_workflow(
+            &comfy_address,
+            "generative_replace",
+            workflow_inputs,
+            source_image,
+            Some(mask_image),
+            Some(patch_definition.prompt)
+        ).await.map_err(|e| e.to_string())?;
+        
+        image::load_from_memory(&result_png_bytes).map_err(|e| e.to_string())?.to_rgba8()
     };
 
-    let result_png_bytes = comfyui_connector::execute_workflow(
-        &address,
-        "generative_replace",
-        workflow_inputs,
-        source_image,
-        Some(mask_image),
-        Some(patch_definition.prompt)
-    ).await.map_err(|e| e.to_string())?;
+    let (width, height) = patch_rgba.dimensions();
+    let mut color_image = RgbImage::new(width, height);
+    let mask_image = mask_bitmap;
 
-    Ok(general_purpose::STANDARD.encode(&result_png_bytes))
+    for y in 0..height {
+        for x in 0..width {
+            if mask_image.get_pixel(x, y)[0] > 0 {
+                let patch_pixel = patch_rgba.get_pixel(x, y);
+                color_image.put_pixel(x, y, Rgb([patch_pixel[0], patch_pixel[1], patch_pixel[2]]));
+            }
+        }
+    }
+
+    let quality = 75;
+
+    let mut color_buf = Cursor::new(Vec::new());
+    color_image.write_with_encoder(JpegEncoder::new_with_quality(&mut color_buf, quality))
+        .map_err(|e| e.to_string())?;
+    let color_base64 = general_purpose::STANDARD.encode(color_buf.get_ref());
+
+    let mut mask_buf = Cursor::new(Vec::new());
+    mask_image.write_with_encoder(JpegEncoder::new_with_quality(&mut mask_buf, quality))
+        .map_err(|e| e.to_string())?;
+    let mask_base64 = general_purpose::STANDARD.encode(mask_buf.get_ref());
+
+    let result_json = serde_json::json!({
+        "color": color_base64,
+        "mask": mask_base64
+    }).to_string();
+
+    Ok(result_json)
 }
 
 #[tauri::command]

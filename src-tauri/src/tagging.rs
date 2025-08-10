@@ -221,7 +221,6 @@ pub async fn start_background_indexing(folder_path: String, app_handle: AppHandl
 
     let settings = file_management::load_settings(app_handle.clone())?;
     if !settings.enable_ai_tagging.unwrap_or(false) {
-        println!("AI tagging is disabled. Skipping indexing.");
         return Ok(());
     }
 

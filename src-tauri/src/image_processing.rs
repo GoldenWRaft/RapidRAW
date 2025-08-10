@@ -308,7 +308,7 @@ const SCALES: AdjustmentScales = AdjustmentScales {
     exposure: 1.0,
     contrast: 100.0,
     highlights: 100.0,
-    shadows: 200.0,
+    shadows: 100.0,
     whites: 30.0,
     blacks: 60.0,
     saturation: 100.0,
@@ -367,9 +367,9 @@ fn parse_color_grade_settings(js_cg: &serde_json::Value) -> ColorGradeSettings {
         return ColorGradeSettings::default();
     }
     ColorGradeSettings {
-        hue: js_cg["h"].as_f64().unwrap_or(0.0) as f32,
-        saturation: js_cg["s"].as_f64().unwrap_or(0.0) as f32 / SCALES.color_grading_saturation,
-        luminance: js_cg["lum"].as_f64().unwrap_or(0.0) as f32 / SCALES.color_grading_luminance,
+        hue: js_cg["hue"].as_f64().unwrap_or(0.0) as f32,
+        saturation: js_cg["saturation"].as_f64().unwrap_or(0.0) as f32 / SCALES.color_grading_saturation,
+        luminance: js_cg["luminance"].as_f64().unwrap_or(0.0) as f32 / SCALES.color_grading_luminance,
         _pad: 0.0,
     }
 }

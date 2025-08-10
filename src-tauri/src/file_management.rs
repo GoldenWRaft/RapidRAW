@@ -112,6 +112,7 @@ pub struct AppSettings {
     pub enable_ai_tagging: Option<bool>,
     pub tagging_thread_count: Option<u32>,
     pub thumbnail_size: Option<String>,
+    pub thumbnail_aspect_ratio: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -134,6 +135,7 @@ impl Default for AppSettings {
             enable_ai_tagging: Some(false),
             tagging_thread_count: Some(3),
             thumbnail_size: Some("medium".to_string()),
+            thumbnail_aspect_ratio: Some("cover".to_string()),
         }
     }
 }
