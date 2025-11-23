@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { homeDir } from '@tauri-apps/api/path';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import debounce from 'lodash.debounce';
@@ -33,6 +33,7 @@ import {
   PinOff,
   Users,
   Gauge,
+  GalleryVerticalEnd
 } from 'lucide-react';
 import TitleBar from './window/TitleBar';
 import CommunityPage from './components/panel/CommunityPage';
@@ -62,6 +63,7 @@ import PanoramaModal from './components/modals/PanoramaModal';
 import CollageModal from './components/modals/CollageModal';
 import CopyPasteSettingsModal from './components/modals/CopyPasteSettingsModal';
 import CullingModal from './components/modals/CullingModal';
+import MergeEditor, { AlignedBracketFrame } from './components/panel/MergeEditor';
 import { useHistoryState } from './hooks/useHistoryState';
 import Resizer from './components/ui/Resizer';
 import {
@@ -284,6 +286,13 @@ function App() {
   const [transformedOriginalUrl, setTransformedOriginalUrl] = useState<string | null>(null);
   const fullResRequestRef = useRef<any>(null);
   const fullResCacheKeyRef = useRef<string | null>(null);
+  const [bracketReviewState, setBracketReviewState] = useState<{
+    isOpen: boolean;
+    frames: AlignedBracketFrame[];
+  }>({ isOpen: false, frames: [] });
+  const [isMergeMode, setIsMergeMode] = useState(false);
+  const [isMergeEditorOpen, setIsMergeEditorOpen] = useState(false);
+const [mergeFrames, setMergeFrames] = useState<any[]>([]);
 
   useDelayedRevokeBlobUrl(finalPreviewUrl);
   useDelayedRevokeBlobUrl(uncroppedAdjustedPreviewUrl);
@@ -3181,6 +3190,42 @@ function App() {
               });
             },
           },
+          /// CHANGES HERE 
+          {
+            icon: GalleryVerticalEnd,
+            label: "Bracket Merging",
+            disabled: selectionCount < 2,
+            onClick: async () => {
+              // 1. Show Loading Modal (Reusing Panorama Modal for UI feedback)
+              setPanoramaModalState({
+                error: null,
+                finalImageBase64: null,
+                isOpen: true,
+                progressMessage: 'Aligning images (Calculating Geometry)...',
+                stitchingSourcePaths: finalSelection,
+              });
+
+              try {
+                // 2. Call Backend Alignment
+                const frames = await invoke<AlignedBracketFrame[]>('align_bracket_images', { 
+                  paths: finalSelection 
+                });
+                
+                // 3. Success! Switch to Merge Editor
+                setMergeFrames(frames);
+                setIsMergeEditorOpen(true);
+                setPanoramaModalState(prev => ({ ...prev, isOpen: false }));
+
+              } catch (error) {
+                console.error("Alignment failed:", error);
+                setPanoramaModalState(prev => ({
+                  ...prev,
+                  error: `Alignment failed: ${error}`,
+                  progressMessage: 'Process failed.'
+                }));
+              }
+            },
+          },
           {
             icon: LayoutTemplate,
             label: collageLabel,
@@ -3491,6 +3536,12 @@ function App() {
       exit: { opacity: 0.4, y: -20, transition: { duration: 0.1, ease: 'circIn' } },
       initial: { opacity: 0.4, y: 20 },
     };
+    if (isMergeMode) {
+      return <MergeEditor 
+                frames={mergeFrames} 
+                onClose={() => setIsMergeMode(false)} 
+            />;
+    }
 
     if (selectedImage) {
       return (
@@ -3949,6 +4000,50 @@ function App() {
         sourceImages={collageModalState.sourceImages}
         thumbnails={thumbnails}
       />
+      {/* <BracketReviewModal 
+        isOpen={bracketReviewState.isOpen}
+        frames={bracketReviewState.frames}
+        onClose={() => setBracketReviewState({ isOpen: false, frames: [] })}
+        onConfirm={() => {
+          setBracketReviewState({ isOpen: false, frames: [] });
+          setMergeFrames(bracketReviewState.frames);
+          setIsMergeMode(true);
+        }}
+        /> */}
+        {isMergeEditorOpen && (
+          <MergeEditor 
+            frames={mergeFrames}
+            onClose={() => setIsMergeEditorOpen(false)}
+            onSave={async (settings) => {
+              try {
+                  // 1. Open Save Dialog
+                  const path = await save({
+                      filters: [{ name: 'Image', extensions: ['jpg', 'png'] }],
+                      defaultPath: 'merged_result.jpg'
+                  });
+                  
+                  if (!path) return;
+
+                  // 2. Call Backend Save
+                  // Note: You might want to show a global loading spinner here
+                  await invoke('save_merged_image', {
+                      frames: mergeFrames,
+                      mode: settings.mode,
+                      enabled: settings.enabledIndices,
+                      param: settings.param, // Ensure MergeSettings interface includes param
+                      outputPath: path
+                  });
+                  
+                  // 3. Success
+                  setIsMergeEditorOpen(false);
+                  await refreshImageList(); // Refresh library to show new file
+                  
+              } catch (e) {
+                  console.error("Save failed", e);
+              }
+          }}
+          />
+        )}
     </div>
   );
 }

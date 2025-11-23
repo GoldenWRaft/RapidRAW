@@ -176,6 +176,10 @@ struct AllAdjustments {
     mask_atlas_cols: u32,
 }
 
+struct AlignmentData {
+    matrices: array<mat4x4<f32>, 8>,
+};
+
 struct HslRange {
     center: f32,
     width: f32,
@@ -1149,4 +1153,32 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     final_rgb += dither(id.xy) * dither_amount;
 
     textureStore(output_texture, id.xy, vec4<f32>(clamp(final_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), original_alpha));
+}
+
+@group(0) @binding(0) var input_textures: texture_2d_array<f32>;
+@group(0) @binding(1) var<uniform> align: AlignmentData;
+
+fn get_aligned_pixel(layer_idx: i32, uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
+    let m = align.matrices[layer_idx];
+    
+    // Homography Transform Logic
+    // 1. Convert UV (0..1) to Pixel Coords
+    let pixel_coord = vec3<f32>(uv * dims, 1.0);
+    
+    // 2. Apply Matrix
+    let warped = m * vec4<f32>(pixel_coord, 1.0);
+    
+    // 3. Perspective Divide (Critical for tilted/handheld shifts)
+    let projected = warped.xy / warped.z;
+    
+    // 4. Convert back to UV or integer coord
+    let sample_coord = vec2<i32>(round(projected));
+    
+    // 5. Boundary Check
+    if (sample_coord.x < 0 || sample_coord.x >= i32(dims.x) || 
+        sample_coord.y < 0 || sample_coord.y >= i32(dims.y)) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0); // Black out of bounds
+    }
+    
+    return textureLoad(input_textures, sample_coord, layer_idx, 0);
 }

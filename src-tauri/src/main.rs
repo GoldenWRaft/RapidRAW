@@ -21,6 +21,8 @@ mod preset_converter;
 mod raw_processing;
 mod tagging;
 mod tagging_utils;
+mod bracketing_pipeline;
+mod wgpu_merge;
 
 use log;
 use std::collections::{HashMap, hash_map::DefaultHasher};
@@ -55,6 +57,7 @@ use tempfile::NamedTempFile;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::task::JoinHandle;
 use wgpu::{Texture, TextureView};
+use nalgebra::Matrix3;
 
 use crate::ai_processing::{
     AiForegroundMaskParameters, AiSkyMaskParameters, AiState, AiSubjectMaskParameters,
@@ -99,6 +102,16 @@ pub struct GpuImageCache {
     pub width: u32,
     pub height: u32,
     pub transform_hash: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AlignedBracketFrame {
+    pub index: usize,
+    pub path: String,
+    pub transform: [[f32; 4]; 4],
+    pub preview_base64: String,
+    pub orig_w: u32, 
+    pub orig_h: u32,
 }
 
 pub struct AppState {
@@ -2171,6 +2184,158 @@ fn get_supported_file_types() -> Result<serde_json::Value, String> {
     }))
 }
 
+    
+#[tauri::command]
+async fn align_bracket_images(
+    paths: Vec<String>,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>, 
+) -> Result<Vec<AlignedBracketFrame>, String> {
+    
+    if paths.len() < 2 {
+        return Err("At least two images are required.".to_string());
+    }
+
+    // 1. Resolve Paths
+    let source_paths: Vec<String> = paths
+        .iter()
+        .map(|p| parse_virtual_path(p).0.to_string_lossy().into_owned())
+        .collect();
+
+    let result_frames = tokio::task::spawn_blocking(move || {
+        // A. Run Math
+        let matrices = bracketing_pipeline::align_brackets(&source_paths.clone(), None, app_handle)?;
+
+        // B. Generate Previews
+        let frames: Vec<AlignedBracketFrame> = source_paths
+            .par_iter()
+            .enumerate()
+            .filter_map(|(i, path)| {
+                if i >= matrices.len() { return None; }
+
+                let (mat3, orig_w, orig_h) = matrices[i];
+
+                // Load fast proxy
+                let img_result = crate::image_loader::load_base_image_from_bytes(
+                    &std::fs::read(path).ok()?, 
+                    path, 
+                    false, 
+                    4.0 
+                );
+
+                if let Ok(dyn_img) = img_result {
+                    let mut preview = dyn_img.resize(1024, 1024, image::imageops::FilterType::Triangle);
+
+                        // CHECK FILE EXTENSION
+                        let path_lower = path.to_lowercase();
+
+                        // ONLY apply Gamma Correction to Raw files
+                        if is_raw_file(&path_lower) {
+                            if let Some(rgb) = preview.as_mut_rgb8() {
+                                for p in rgb.pixels_mut() {
+                                    let r = ((p[0] as f32 / 255.0).powf(1.0 / 2.2) * 255.0) as u8;
+                                    let g = ((p[1] as f32 / 255.0).powf(1.0 / 2.2) * 255.0) as u8;
+                                    let b = ((p[2] as f32 / 255.0).powf(1.0 / 2.2) * 255.0) as u8;
+                                    *p = image::Rgb([r, g, b]);
+                                }
+                            }
+                        }
+
+                    // 3. Encode
+                    let mut buf = Cursor::new(Vec::new());
+                    preview.write_to(&mut buf, ImageFormat::Jpeg).ok()?;
+                    let b64 = general_purpose::STANDARD.encode(buf.get_ref());
+
+                    // 4. Convert Matrix (3x3 -> 4x4)
+                    let mat4 = [
+                        [mat3[(0,0)] as f32, mat3[(1,0)] as f32, mat3[(2,0)] as f32, 0.0],
+                        [mat3[(0,1)] as f32, mat3[(1,1)] as f32, mat3[(2,1)] as f32, 0.0],
+                        [mat3[(0,2)] as f32, mat3[(1,2)] as f32, mat3[(2,2)] as f32, 0.0],
+                        [0.0,                0.0,                0.0,                1.0],
+                    ];
+
+                    Some(AlignedBracketFrame {
+                        index: i,
+                        path: path.clone(),
+                        transform: mat4,
+                        preview_base64: format!("data:image/jpeg;base64,{}", b64),
+                        orig_w,
+                        orig_h,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Ok::<Vec<AlignedBracketFrame>, String>(frames)
+    })
+    .await
+    .map_err(|e| format!("Task error: {}", e))??;
+
+    Ok(result_frames)
+}
+
+#[tauri::command]
+async fn merge_bracket_images(
+    frames: Vec<AlignedBracketFrame>,
+    mode: String,
+    _app_handle: tauri::AppHandle,
+    enabled: Vec<bool>,
+    param: f32,
+) -> Result<String, String> {
+    if frames.is_empty() { return Err("No frames provided".to_string()); }
+
+    println!("Starting GPU Merge on {} frames...", frames.len());
+
+    // 1. Calculate Target Size (Preserving Aspect Ratio)
+    let w = frames[0].orig_w;
+    let h = frames[0].orig_h;
+    
+    // Scale down to max 1500px for preview speed
+    let max_dim = 1500.0;
+    let scale = if w > h { max_dim / w as f64 } else { max_dim / h as f64 };
+    let target_w = (w as f64 * scale).round() as u32;
+    let target_h = (h as f64 * scale).round() as u32;
+
+    // 2. Run WGPU Task
+    // Using spawn_blocking to avoid freezing main thread
+    let merged_image = tokio::task::spawn_blocking(move || {
+        tauri::async_runtime::block_on(async {
+            // Pass 'mode' down
+            wgpu_merge::run_merge_pass(&frames, target_w, target_h, &mode, &enabled, param).await
+        })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))??;
+
+    // 3. Encode to JPEG
+    let mut buf = Cursor::new(Vec::new());
+    merged_image.write_to(&mut buf, ImageFormat::Jpeg)
+        .map_err(|e| format!("Encoding failed: {}", e))?;
+    
+    let b64 = general_purpose::STANDARD.encode(buf.get_ref());
+    Ok(format!("data:image/jpeg;base64,{}", b64))
+}
+
+#[tauri::command]
+async fn save_merged_image(
+    frames: Vec<AlignedBracketFrame>,
+    mode: String,
+    enabled: Vec<bool>,
+    output_path: String,
+    _app_handle: tauri::AppHandle,
+    param: f32,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        tauri::async_runtime::block_on(async {
+            wgpu_merge::save_high_res_merge(&frames, &mode, &enabled, &output_path, param).await
+        })
+    }).await.map_err(|e| e.to_string())??;
+    
+    Ok(())
+}
+
 #[tauri::command]
 async fn stitch_panorama(
     paths: Vec<String>,
@@ -2811,6 +2976,9 @@ fn main() {
             save_temp_file,
             get_image_dimensions,
             frontend_ready,
+            align_bracket_images,
+            merge_bracket_images,
+            save_merged_image,
             image_processing::generate_histogram,
             image_processing::generate_waveform,
             image_processing::calculate_auto_adjustments,
