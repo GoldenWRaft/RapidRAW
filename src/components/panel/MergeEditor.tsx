@@ -211,7 +211,7 @@ export default function MergeEditor({ frames, onClose, onSave }: Props) {
   const handleMouseUp = () => setIsDragging(false);
 
   return (
-    <div className="fixed inset-0 z-[100] bg-[#1e1e1e] flex font-sans select-none text-gray-200">
+    <div className="fixed inset-0 z-[100] bg-[#1e1e1e] flex font-sans select-none text-gray-200 top-10">
       
       {/* --- LEFT SIDEBAR: LAYERS --- */}
       <div className="w-72 bg-[#252525] border-r border-gray-800 flex flex-col shadow-2xl">

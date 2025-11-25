@@ -1,7 +1,5 @@
-// src-tauri/src/shaders/normalization.wgsl
-
 struct NormUniforms {
-    algo_mode: u32, // 0=Exposure, 1=Focus
+    algo_mode: u32,
 };
 
 @group(0) @binding(0) var accum_color: texture_storage_2d<rgba32float, read>;
@@ -20,14 +18,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var final_color = sum_c.rgb;
 
-    // Exposure Fusion uses Weighted Average (SumColor / SumWeight)
-    // Focus Stacking uses Replacement (Color is already correct), no division needed.
-    if (u.algo_mode == 0u && sum_w > 0.0001) {
+    // UNIFIED NORMALIZATION
+    // Both algorithms now use Weighted Accumulation.
+    // We must divide by weight to get the pixel back.
+    if (sum_w > 0.00001) {
         final_color = final_color / sum_w;
     }
 
-    // Gamma Correction (Linear -> sRGB)
-    // Required because all inputs were linearized in the accumulation step
+    // Output Gamma (Linear -> sRGB)
     final_color = pow(final_color, vec3<f32>(1.0 / 2.2));
 
     textureStore(output_texture, pos, vec4<f32>(final_color, 1.0));

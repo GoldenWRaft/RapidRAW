@@ -10,6 +10,7 @@ interface PanoramaModalProps {
   onOpenFile(path: string): void;
   onSave(): Promise<string>;
   progressMessage: string | null;
+  title: string | null;
 }
 
 export default function PanoramaModal({
@@ -20,6 +21,7 @@ export default function PanoramaModal({
   onOpenFile,
   onSave,
   progressMessage,
+  title
 }: PanoramaModalProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [savedPath, setSavedPath] = useState<string | null>(null);
@@ -111,7 +113,7 @@ export default function PanoramaModal({
         <div className="w-16 h-16 mx-auto mb-4">
           <Loader2 className="w-16 h-16 text-accent animate-spin" />
         </div>
-        <h3 className="text-lg font-semibold text-text-primary mb-2 text-center">Stitching Panorama</h3>
+        <h3 className="text-lg font-semibold text-text-primary mb-2 text-center">{title ?? "Stitching Panorama"}</h3>
         <p className="text-sm text-text-secondary text-center min-h-[1.25rem]">{progressMessage}</p>
       </>
     );

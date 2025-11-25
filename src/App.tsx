@@ -159,6 +159,7 @@ interface PanoramaModalState {
   isOpen: boolean;
   progressMessage: string | null;
   stitchingSourcePaths: Array<string>;
+  title: string | null;
 }
 
 interface CullingModalState {
@@ -363,6 +364,7 @@ const [mergeFrames, setMergeFrames] = useState<any[]>([]);
     isOpen: false,
     progressMessage: '',
     stitchingSourcePaths: [],
+    title: null
   });
   const [cullingModalState, setCullingModalState] = useState<CullingModalState>({
     isOpen: false,
@@ -3179,6 +3181,7 @@ const [mergeFrames, setMergeFrames] = useState<any[]>([]);
                 isOpen: true,
                 progressMessage: 'Starting panorama process...',
                 stitchingSourcePaths: finalSelection,
+                title: null
               });
               invoke(Invokes.StitchPanorama, { paths: finalSelection }).catch((err) => {
                 setPanoramaModalState((prev: PanoramaModalState) => ({
@@ -3203,6 +3206,7 @@ const [mergeFrames, setMergeFrames] = useState<any[]>([]);
                 isOpen: true,
                 progressMessage: 'Aligning images (Calculating Geometry)...',
                 stitchingSourcePaths: finalSelection,
+                title: "Preparing Merge View"
               });
 
               try {
@@ -3214,14 +3218,15 @@ const [mergeFrames, setMergeFrames] = useState<any[]>([]);
                 // 3. Success! Switch to Merge Editor
                 setMergeFrames(frames);
                 setIsMergeEditorOpen(true);
-                setPanoramaModalState(prev => ({ ...prev, isOpen: false }));
+                setPanoramaModalState(prev => ({ ...prev, isOpen: false, title: "Preparing Merge View" }));
 
               } catch (error) {
                 console.error("Alignment failed:", error);
                 setPanoramaModalState(prev => ({
                   ...prev,
                   error: `Alignment failed: ${error}`,
-                  progressMessage: 'Process failed.'
+                  progressMessage: 'Process failed.',
+                  title: "Preparing Merge View"
                 }));
               }
             },
@@ -3939,6 +3944,7 @@ const [mergeFrames, setMergeFrames] = useState<any[]>([]);
             finalImageBase64: null,
             error: null,
             stitchingSourcePaths: [],
+            title: null
           })
         }
         onOpenFile={(path: string) => {
@@ -3946,6 +3952,7 @@ const [mergeFrames, setMergeFrames] = useState<any[]>([]);
         }}
         onSave={handleSavePanorama}
         progressMessage={panoramaModalState.progressMessage}
+        title={null}
       />
       <CreateFolderModal
         isOpen={isCreateFolderModalOpen}
