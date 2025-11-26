@@ -2286,24 +2286,46 @@ async fn merge_bracket_images(
 ) -> Result<String, String> {
     if frames.is_empty() { return Err("No frames provided".to_string()); }
 
-    println!("Starting GPU Merge on {} frames...", frames.len());
+    println!("Starting GPU Merge ({}) on {} frames...", mode, frames.len());
 
     // 1. Calculate Target Size (Preserving Aspect Ratio)
     let w = frames[0].orig_w;
     let h = frames[0].orig_h;
     
-    // Scale down to max 1500px for preview speed
+    // Scale down to max 1500px for fast preview
     let max_dim = 1500.0;
     let scale = if w > h { max_dim / w as f64 } else { max_dim / h as f64 };
     let target_w = (w as f64 * scale).round() as u32;
     let target_h = (h as f64 * scale).round() as u32;
 
     // 2. Run WGPU Task
-    // Using spawn_blocking to avoid freezing main thread
     let merged_image = tokio::task::spawn_blocking(move || {
         tauri::async_runtime::block_on(async {
-            // Pass 'mode' down
-            wgpu_merge::run_merge_pass(&frames, target_w, target_h, &mode, &enabled, param).await
+            if mode == "focus" {
+                // --- NEW FOCUS PIPELINE ---
+                // 1. Filter Frames: Only pass enabled frames to the new engine.
+                // The new engine expects a clean list and doesn't handle 'enabled' logic internally.
+                let active_frames: Vec<AlignedBracketFrame> = frames
+                    .iter()
+                    .zip(enabled.iter())
+                    .filter(|(_, e)| **e)
+                    .map(|(f, _)| f.clone()) 
+                    .collect();
+
+                if active_frames.is_empty() {
+                    return Err("No enabled frames selected for focus stack".to_string());
+                }
+
+                // 2. Run the Dual-Layer Focus Engine
+                wgpu_merge::run_focus_merge(&active_frames, target_w, target_h, param).await
+
+            } else {
+                // --- HDR / EXPOSURE PIPELINE ---
+                // Keep using the existing function for Exposure.
+                // Note: Eventually you should refactor run_merge_pass to 'run_hdr_merge'
+                // and clean up its arguments, but for now, this works.
+                wgpu_merge::run_merge_pass(&frames, target_w, target_h, &mode, &enabled, param).await
+            }
         })
     })
     .await
